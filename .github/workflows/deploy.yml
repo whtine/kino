@@ -1,0 +1,40 @@
+name: Validate and deploy to Render
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile Python sources
+        run: python -m compileall -q .
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Verify bot imports
+        env:
+          VK_TOKEN: test-token
+          GROUP_ID: "1"
+          SUPABASE_URL: https://example.supabase.co
+          SUPABASE_KEY: test-key
+        run: python -c "from bot.dispatcher import bot; assert bot.polling.group_id == 1"
+
+  deploy:
+    if: github.event_name == 'push'
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to Render
+        uses: render-oss/render-deploy-action@v1
+        with:
+          key: ${{ secrets.RENDER_API_KEY }}
+          service: ${{ secrets.RENDER_SERVICE_ID }}

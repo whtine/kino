@@ -1,0 +1,1 @@
+"""VK moderation bot package."""
