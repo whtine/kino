@@ -92,8 +92,15 @@ class VKAPIWrapper:
                 and item.conversation_message_id != exclude_cmid
             ][:amount]
             return await self.delete_message(chat_id, ids) if ids else False
-        except Exception:
-            logger.exception("Could not read recent messages in chat %s", chat_id)
+        except Exception as exc:
+            error_code = getattr(exc, "code", getattr(exc, "error_code", "unknown"))
+            error_message = getattr(exc, "error_msg", str(exc))
+            logger.exception(
+                "Could not read recent messages in chat %s (VK error %s: %s)",
+                chat_id,
+                error_code,
+                error_message,
+            )
             return False
 
     async def pin_message(self, chat_id: int, conversation_message_id: int) -> bool:

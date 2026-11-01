@@ -480,10 +480,21 @@ async def command_router(message: Message):
         if command == "nlist":
             entries = await members.get_all_in_chat(chat_id)
             entries = [entry for entry in entries if entry.get("nickname")]
-            await message.answer(
-                "\n".join(f"• [id{entry['user_id']}|{entry['nickname']}]" for entry in entries)
-                if entries else "📋 Никнеймы не установлены."
+            if not entries:
+                await message.answer("📋 Пользователей с ником нет.")
+                return
+            entries.sort(
+                key=lambda entry: (
+                    str(entry["nickname"]).casefold(),
+                    int(entry["user_id"]),
+                )
             )
+            lines = [f"🏷 Пользователей с ником: {len(entries)}"]
+            lines.extend(
+                f"{index}) [id{entry['user_id']}|user] — {entry['nickname']}"
+                for index, entry in enumerate(entries, start=1)
+            )
+            await message.answer("\n".join(lines))
             return
         if command == "gnick":
             target_id, _ = _target_from_args(message, args)
