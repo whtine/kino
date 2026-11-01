@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -42,6 +43,7 @@ TARGET_PATTERN = re.compile(r"(?:\[id|@id)(\d+)(?:\||\])?")
 _SEEN_MESSAGE_TTL_SECONDS = 120
 _MAX_SEEN_MESSAGES = 4096
 _seen_messages: OrderedDict[tuple[int, int], float] = OrderedDict()
+_CLEAR_RESULT_DELETE_DELAY_SECONDS = 5 * 60
 
 
 def _parts(text: str) -> tuple[str, list[str]]:
@@ -149,6 +151,31 @@ async def _add_log(
 ) -> None:
     if not await punishments.add(chat_id, target_id, moderator_id, kind, reason, duration):
         raise RuntimeError(f"Не удалось сохранить запись действия {kind}.")
+
+
+async def _delete_clear_messages_later(chat_id: int, cmids: list[int]) -> None:
+    await asyncio.sleep(_CLEAR_RESULT_DELETE_DELAY_SECONDS)
+    if not vk_api or not await vk_api.delete_message(chat_id, cmids):
+        logger.warning(
+            "Could not delete /clear command and result messages %s in chat %s after delay",
+            cmids,
+            chat_id,
+        )
+
+
+def _schedule_clear_message_cleanup(chat_id: int, command_cmid: int, response) -> None:
+    response_cmid = getattr(response, "conversation_message_id", None)
+    cmids = list(dict.fromkeys(cmid for cmid in (command_cmid, response_cmid) if cmid))
+    if not cmids:
+        logger.error(
+            "Could not schedule /clear message cleanup in chat %s: no message IDs",
+            chat_id,
+        )
+        return
+    asyncio.create_task(
+        _delete_clear_messages_later(chat_id, cmids),
+        name=f"clear-message-cleanup-{chat_id}",
+    )
 
 
 @bp.on.chat_message()
@@ -424,7 +451,12 @@ async def command_router(message: Message):
                         "сообщества и администратора беседы на удаление сообщений."
                     )
                     return
-                await message.answer("✅ Отмеченное сообщение удалено.")
+                response = await message.answer("✅ Отмеченное сообщение удалено.")
+                _schedule_clear_message_cleanup(
+                    chat_id,
+                    message.conversation_message_id,
+                    response,
+                )
                 return
 
             amount = int(args[0]) if args and args[0].isdigit() else 1
@@ -449,9 +481,14 @@ async def command_router(message: Message):
                     "в беседу. Старые сообщения VK не отдаёт."
                 )
                 return
-            await message.answer(
+            response = await message.answer(
                 "✅ Сообщения удалены. Сообщения пользователей с более высокой "
                 "ролью пропущены."
+            )
+            _schedule_clear_message_cleanup(
+                chat_id,
+                message.conversation_message_id,
+                response,
             )
             return
         if command == "del":
@@ -537,10 +574,11 @@ async def command_router(message: Message):
                     if vk_api
                     else {}
                 )
-                actor = format_user_mention(user_id, names.get(user_id))
-                target = format_user_mention(target_id, names.get(target_id))
+                actor = names.get(user_id) or f"ID {user_id}"
+                target = names.get(target_id) or f"ID {target_id}"
                 await message.answer(
-                    f"🏷 {actor} изменил ник {target} на «{new_nickname}»."
+                    f"🏷 {actor} изменил никнейм {target}. "
+                    f"Новый никнейм: «{new_nickname}»."
                 )
             else:
                 if not await members.set_nickname(chat_id, target_id, None):
@@ -557,10 +595,10 @@ async def command_router(message: Message):
                     if vk_api
                     else {}
                 )
-                actor = format_user_mention(user_id, names.get(user_id))
-                target = format_user_mention(target_id, names.get(target_id))
+                actor = names.get(user_id) or f"ID {user_id}"
+                target = names.get(target_id) or f"ID {target_id}"
                 await message.answer(
-                    f"✅ {actor} удалил ник у {target}."
+                    f"✅ {actor} удалил никнейм у {target}."
                 )
             return
         if command == "getnick":

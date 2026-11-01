@@ -117,13 +117,21 @@ class VKAPIWrapper:
         except Exception as exc:
             error_code = getattr(exc, "code", getattr(exc, "error_code", "unknown"))
             error_message = getattr(exc, "error_msg", str(exc))
-            logger.error(
-                "Could not read recent messages in chat %s (VK error %s: %s)",
-                chat_id,
-                error_code,
-                error_message,
-                exc_info=True,
-            )
+            if error_code == 15:
+                logger.warning(
+                    "VK denied history access in chat %s (error %s: %s); "
+                    "will use cached messages if available",
+                    chat_id,
+                    error_code,
+                    error_message,
+                )
+            else:
+                logger.exception(
+                    "Could not read recent messages in chat %s (VK error %s: %s)",
+                    chat_id,
+                    error_code,
+                    error_message,
+                )
             if error_code != 15:
                 return False
             cached = _recent_chat_messages.get(chat_id)
@@ -218,60 +226,47 @@ class VKAPIWrapper:
         return False
 
     async def get_member_names(self, chat_id: int, user_ids: List[int]) -> Dict[int, str]:
-        names: Dict[int, str] = {}
         wanted = set(user_ids or [])
         if not wanted:
-            return names
+            return {}
 
-        profiles = await self.get_member_profiles(chat_id)
-        for profile in profiles:
-            profile_id = (
-                profile.get("id")
-                if isinstance(profile, dict)
-                else getattr(profile, "id", None)
-            )
-            if profile_id is None or profile_id not in wanted:
-                continue
-            first_name = (
-                profile.get("first_name")
-                if isinstance(profile, dict)
-                else getattr(profile, "first_name", "")
-            ) or ""
-            last_name = (
-                profile.get("last_name")
-                if isinstance(profile, dict)
-                else getattr(profile, "last_name", "")
-            ) or ""
-            display_name = f"{first_name} {last_name}".strip()
-            if not display_name:
-                display_name = (
-                    profile.get("screen_name")
-                    if isinstance(profile, dict)
-                    else getattr(profile, "screen_name", "")
-                ) or ""
-            if display_name:
-                names[profile_id] = display_name
+        names: Dict[int, str] = {}
 
-        missing_ids = wanted - names.keys()
-        if missing_ids:
+        def display_name(profile: Any) -> tuple[Optional[int], str]:
+            if isinstance(profile, dict):
+                profile_id = profile.get("id")
+                first_name = profile.get("first_name") or ""
+                last_name = profile.get("last_name") or ""
+                screen_name = profile.get("screen_name") or ""
+            else:
+                profile_id = getattr(profile, "id", None)
+                first_name = getattr(profile, "first_name", "") or ""
+                last_name = getattr(profile, "last_name", "") or ""
+                screen_name = getattr(profile, "screen_name", "") or ""
+            name = f"{first_name} {last_name}".strip() or screen_name
+            return profile_id, name
+
+        lookup_ids = [user_id for user_id in wanted if user_id > 0]
+        if lookup_ids:
             try:
-                profiles = await self.api.users.get(user_ids=list(missing_ids))
+                profiles = await self.api.users.get(user_ids=lookup_ids)
             except Exception:
                 logger.exception(
                     "Could not retrieve VK names for users %s in chat %s",
-                    sorted(missing_ids),
+                    lookup_ids,
                     chat_id,
                 )
             else:
                 for profile in profiles:
-                    profile_id = getattr(profile, "id", None)
-                    first_name = getattr(profile, "first_name", "") or ""
-                    last_name = getattr(profile, "last_name", "") or ""
-                    display_name = f"{first_name} {last_name}".strip()
-                    if not display_name:
-                        display_name = getattr(profile, "screen_name", "") or ""
-                    if profile_id is not None and display_name:
-                        names[profile_id] = display_name
+                    profile_id, name = display_name(profile)
+                    if profile_id in wanted and name:
+                        names[profile_id] = name
+
+        profiles = await self.get_member_profiles(chat_id)
+        for profile in profiles:
+            profile_id, name = display_name(profile)
+            if profile_id in wanted and name:
+                names.setdefault(profile_id, name)
         return names
 
     async def mention_all(self, chat_id: int, max_mentions: int = 100) -> str:
