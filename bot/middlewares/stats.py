@@ -6,6 +6,7 @@ from vkbottle import BaseMiddleware
 from vkbottle.bot import Message
 
 from bot.utils.context import get_chat_id
+from bot.utils.vk_api import remember_chat_message
 from db.repositories.chats import ChatsRepository
 from db.repositories.stats import StatsRepository
 
@@ -22,13 +23,19 @@ class StatsMiddleware(BaseMiddleware[Message]):
         chat_id = get_chat_id(message)
         user_id = getattr(message, "from_id", None)
 
-        if chat_id is None or not user_id or user_id <= 0:
-            return
-        if (getattr(message, "text", None) or "").strip().startswith("/"):
+        if chat_id is None or not user_id:
             return
 
         chat = await chats_repo.get(chat_id)
         if not chat or not chat.get("is_active"):
+            return
+
+        cmid = getattr(message, "conversation_message_id", None)
+        if cmid is not None:
+            remember_chat_message(chat_id, cmid, user_id)
+        if user_id < 0:
+            return
+        if (getattr(message, "text", None) or "").strip().startswith("/"):
             return
 
         try:

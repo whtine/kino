@@ -1,9 +1,22 @@
 import logging
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 from vkbottle import API
 
 logger = logging.getLogger(__name__)
+
+_RECENT_MESSAGE_LIMIT = 500
+_recent_chat_messages: Dict[int, OrderedDict[int, int]] = {}
+
+
+def remember_chat_message(chat_id: int, cmid: int, user_id: int) -> None:
+    """Keep a bounded in-process message index for chats where history is unavailable."""
+    messages = _recent_chat_messages.setdefault(chat_id, OrderedDict())
+    messages[cmid] = user_id
+    messages.move_to_end(cmid)
+    while len(messages) > _RECENT_MESSAGE_LIMIT:
+        messages.popitem(last=False)
 
 
 class VKAPIWrapper:
@@ -86,39 +99,68 @@ class VKAPIWrapper:
         try:
             history = await self.api.messages.get_history(
                 peer_id=chat_id,
-                count=min(amount + (1 if exclude_cmid else 0) + len(protected_user_ids or set()), 200),
+                count=min(
+                    amount
+                    + (1 if exclude_cmid else 0)
+                    + len(protected_user_ids or set()),
+                    200,
+                ),
             )
             items = getattr(history, "items", None) or []
-            ids = [
-                item.conversation_message_id
-                for item in items
-                if getattr(item, "conversation_message_id", None) is not None
-                and item.conversation_message_id != exclude_cmid
-                and getattr(item, "from_id", None) not in (protected_user_ids or set())
-            ][:amount]
-            skipped = sum(
-                1
-                for item in items
-                if getattr(item, "conversation_message_id", None) != exclude_cmid
-                and getattr(item, "from_id", None) in (protected_user_ids or set())
-            )
-            if skipped:
-                logger.info(
-                    "Skipped %s messages from higher-role users while clearing chat %s",
-                    skipped,
-                    chat_id,
+            messages = [
+                (
+                    getattr(item, "conversation_message_id", None),
+                    getattr(item, "from_id", None),
                 )
-            return await self.delete_message(chat_id, ids) if ids else False
+                for item in items
+            ]
         except Exception as exc:
             error_code = getattr(exc, "code", getattr(exc, "error_code", "unknown"))
             error_message = getattr(exc, "error_msg", str(exc))
-            logger.exception(
+            logger.error(
                 "Could not read recent messages in chat %s (VK error %s: %s)",
                 chat_id,
                 error_code,
                 error_message,
+                exc_info=True,
             )
-            return False
+            if error_code != 15:
+                return False
+            cached = _recent_chat_messages.get(chat_id)
+            if not cached:
+                logger.warning(
+                    "No cached messages available to clear chat %s after VK denied history access",
+                    chat_id,
+                )
+                return False
+            messages = list(reversed(cached.items()))
+            logger.warning(
+                "Using %s in-process cached messages to clear chat %s; "
+                "messages from before this process started are unavailable",
+                len(messages),
+                chat_id,
+            )
+
+        protected = protected_user_ids or set()
+        ids = [
+            cmid
+            for cmid, sender_id in messages
+            if cmid is not None
+            and cmid != exclude_cmid
+            and sender_id not in protected
+        ][:amount]
+        skipped = sum(
+            1
+            for cmid, sender_id in messages
+            if cmid != exclude_cmid and sender_id in protected
+        )
+        if skipped:
+            logger.info(
+                "Skipped %s messages from higher-role users while clearing chat %s",
+                skipped,
+                chat_id,
+            )
+        return await self.delete_message(chat_id, ids) if ids else False
 
     async def pin_message(self, chat_id: int, conversation_message_id: int) -> bool:
         try:
