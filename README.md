@@ -41,6 +41,7 @@ Open a new terminal after setting these values, then run `python main.py`. The a
 Use the Supabase server-side secret key (`sb_secret_...`) or legacy `service_role` JWT for `SUPABASE_KEY`. The Supabase Python SDK is pinned to a version that supports both key formats. A `sb_publishable_...` key is intended for client-side use and is not suitable for this bot's database access; the app rejects that key format at startup. Never put a real secret in source code or commit it. For Render, set the same values in the service's Environment settings.
 
 `GROUP_ID` is the VK community ID used by Long Poll, not a chat ID. No chat ID is configured in an environment variable; the bot can be activated independently in every conversation it joins.
+At startup, the bot enables the Long Poll `message_event` update used by inline buttons. If the group token cannot change Long Poll settings, the startup log will say so; enable **Message event** in the community's Long Poll event settings.
 
 3. Run the migrations in Supabase SQL Editor in order. If `001_init.sql` has already been applied, run only `002_feature_updates.sql`:
 
