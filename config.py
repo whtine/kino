@@ -16,8 +16,8 @@ class Config:
     activation_command: str = "/activate"
     max_mentions_per_zov: int = 100  # лимит упоминаний за один зов
 
-    # Render / Deployment
-    port: int = 8000  # не используется для Background Worker, но нужен для healthcheck
+    # Render web server
+    port: int = 8000
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -49,6 +49,10 @@ class Config:
         if max_mentions < 1:
             raise ValueError("MAX_MENTIONS_PER_ZOV must be at least 1")
 
+        port = int(os.getenv("PORT", "8000"))
+        if not 1 <= port <= 65535:
+            raise ValueError("PORT must be between 1 and 65535")
+
         return cls(
             vk_token=vk_token,
             group_id=group_id,
@@ -56,7 +60,7 @@ class Config:
             supabase_key=supabase_key,
             activation_command=os.getenv("ACTIVATION_COMMAND", "/activate"),
             max_mentions_per_zov=max_mentions,
-            port=int(os.getenv("PORT", "8000")),
+            port=port,
         )
 
 

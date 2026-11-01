@@ -1,10 +1,11 @@
 services:
-  - type: worker
+  - type: web
     name: vk-moderation-bot
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
+    healthCheckPath: /healthz
     envVars:
       - key: VK_TOKEN
         sync: false
@@ -18,5 +19,3 @@ services:
         value: /activate
       - key: MAX_MENTIONS_PER_ZOV
         value: "100"
-      - key: PORT
-        value: "8000"

@@ -1,6 +1,6 @@
 # Kino — VK Chat Moderation Bot
 
-VK bot for chat moderation with role-based permissions (levels 0-6), Supabase database, deployed on Render Background Worker.
+VK bot for chat moderation with role-based permissions (levels 0-6), Supabase database, deployed on a Render Web Service.
 
 ## Features
 
@@ -17,7 +17,7 @@ VK bot for chat moderation with role-based permissions (levels 0-6), Supabase da
 - Python 3.11+
 - vkbottle 4.10 (async VK API, Long Poll)
 - Supabase (PostgreSQL) with service_role key
-- Render Background Worker (free tier)
+- Render Web Service (free tier) with a small HTTP health endpoint alongside VK Long Poll
 
 ## Setup
 
@@ -57,11 +57,13 @@ python main.py
 
 ## Deployment
 
-- GitHub repository with code.
-- Render.yaml for Background Worker.
-- Environment variables: VK_TOKEN, GROUP_ID, SUPABASE_URL, SUPABASE_KEY.
-- Supabase project with schema from migrations/001_init.sql.
-- New VK community token (old one compromised).
+- Create a **Web Service** on Render from the GitHub repository and select the free plan.
+- Build command: `pip install -r requirements.txt`; start command: `python main.py`.
+- Set `VK_TOKEN`, `GROUP_ID`, `SUPABASE_URL`, and `SUPABASE_KEY` in the Render Environment settings.
+- The app listens on Render's `PORT` at `0.0.0.0` and provides `/healthz` for Render health checks. `/` and `/ping` also return HTTP 200.
+- To reduce free-tier idle spin-down, add an external HTTP monitor (for example, UptimeRobot) for `https://<your-render-service>.onrender.com/healthz` with a 5-minute interval. Create the monitor only after the first successful deploy and substitute your service's actual `onrender.com` URL.
+- A ping monitor can wake the service and reduce idle spin-down, but cannot guarantee uninterrupted free service: Render's free instances have monthly usage limits and may still restart or be suspended.
+- Apply the Supabase migrations and use a server-side Supabase key. Keep all secrets in Render's environment settings, not Git.
 
 ## Commands
 

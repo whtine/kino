@@ -82,45 +82,89 @@ class VKAPIWrapper:
             result = await self.api.messages.get_conversation_members(
                 peer_id=chat_id,
                 extended=True,
+                fields=["first_name", "last_name", "is_bot"],
             )
-            return result.profiles or []
+            return list(result.items or [])
         except Exception:
             logger.exception("Could not retrieve members of chat %s", chat_id)
             raise
 
+    async def get_member_profiles(self, chat_id: int) -> List[Any]:
+        """Return user profiles of conversation members."""
+        try:
+            result = await self.api.messages.get_conversation_members(
+                peer_id=chat_id,
+                extended=True,
+                fields=["first_name", "last_name", "is_bot"],
+            )
+            return list(result.profiles or [])
+        except Exception:
+            logger.exception("Could not retrieve profiles of chat %s", chat_id)
+            return []
+
     async def is_chat_admin(self, chat_id: int, user_id: int) -> bool:
-        result = await self.api.messages.get_conversation_members(peer_id=chat_id)
-        for member in getattr(result, "items", []) or []:
+        try:
+            members = await self.get_conversation_members(chat_id)
+        except Exception:
+            logger.exception("Could not retrieve members of chat %s", chat_id)
+            return False
+        for member in members:
             member_id = getattr(member, "member_id", None)
-            is_admin = getattr(member, "is_admin", False)
-            is_owner = getattr(member, "is_owner", False)
+            is_admin = getattr(member, "is_admin", False) or False
             if isinstance(member, dict):
                 member_id = member.get("member_id", member_id)
                 is_admin = member.get("is_admin", is_admin)
-                is_owner = member.get("is_owner", is_owner)
             if member_id == user_id:
-                return bool(is_admin or is_owner)
+                return bool(is_admin)
         return False
 
     async def get_member_names(self, chat_id: int, user_ids: List[int]) -> Dict[int, str]:
-        profiles = await self.get_conversation_members(chat_id)
-        return {
-            profile.id: f"{profile.first_name} {getattr(profile, 'last_name', '') or ''}".strip()
-            for profile in profiles
-            if profile.id in user_ids
-        }
+        profiles = await self.get_member_profiles(chat_id)
+        names: Dict[int, str] = {}
+        for profile in profiles:
+            profile_id = getattr(profile, "id", None)
+            if isinstance(profile, dict):
+                profile_id = profile.get("id")
+            if profile_id is None or profile_id not in user_ids:
+                continue
+            first_name = (
+                getattr(profile, "first_name", None)
+                or (profile.get("first_name") if isinstance(profile, dict) else "")
+                or ""
+            )
+            last_name = (
+                getattr(profile, "last_name", None)
+                or (profile.get("last_name") if isinstance(profile, dict) else "")
+                or ""
+            )
+            names[profile_id] = f"{first_name} {last_name}".strip()
+        return names
 
     async def mention_all(self, chat_id: int, max_mentions: int = 100) -> str:
-        profiles = await self.get_conversation_members(chat_id)
+        profiles = await self.get_member_profiles(chat_id)
         mentions = []
         for profile in profiles:
-            if profile.id <= 0 or getattr(profile, "is_bot", False):
+            profile_id = getattr(profile, "id", None)
+            if isinstance(profile, dict):
+                profile_id = profile.get("id")
+            if profile_id is None or profile_id <= 0:
+                continue
+            if isinstance(profile, dict) and profile.get("is_bot"):
                 continue
             if len(mentions) >= max_mentions:
                 break
-            last_name = getattr(profile, "last_name", "") or ""
+            first_name = (
+                getattr(profile, "first_name", None)
+                or (profile.get("first_name") if isinstance(profile, dict) else "")
+                or ""
+            )
+            last_name = (
+                getattr(profile, "last_name", None)
+                or (profile.get("last_name") if isinstance(profile, dict) else "")
+                or ""
+            )
             suffix = f" {last_name[0]}." if last_name else ""
-            mentions.append(f"[id{profile.id}|{profile.first_name}{suffix}]")
+            mentions.append(f"[id{profile_id}|{first_name}{suffix}]")
         return " ".join(mentions)
 
     async def send_message(

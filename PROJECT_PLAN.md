@@ -1,7 +1,7 @@
 # VK Bot Project Plan & Requirements
 
 ## Project Overview
-VK Bot for chat moderation with role-based permissions (levels 0-6), Supabase database, deployed on Render Background Worker.
+VK Bot for chat moderation with role-based permissions (levels 0-6), Supabase database, deployed on a Render Web Service.
 
 ## Core Requirements
 
@@ -49,13 +49,13 @@ Tables:
 - **Language**: Python 3.11+
 - **Framework**: vkbottle 4.10 (async VK API)
 - **Database**: Supabase (PostgreSQL) with service_role key
-- **Deployment**: Render Background Worker (free tier, 500 hrs/mo)
+- **Deployment**: Render Web Service (free tier) with an HTTP health endpoint
 - **Long Poll**: Group Long Poll (no webhook needed)
 - **CI/CD**: GitHub Actions → Render auto-deploy
 
 ### 6. Deployment Requirements
 - GitHub repository with code
-- Render.yaml for Background Worker
+- Render.yaml for a Web Service
 - Environment variables: VK_TOKEN, GROUP_ID, SUPABASE_URL, SUPABASE_KEY
 - Supabase project with schema from migrations/001_init.sql
 - New VK community token (old one compromised)
@@ -126,6 +126,6 @@ kino/
 - Create Supabase project, run 001_init.sql in SQL Editor
 - Get new VK community token with messages/manage permissions
 - Get Supabase service_role key (not publishable!)
-- Create Render Background Worker, connect GitHub repo
+- Create Render Web Service, connect GitHub repo, and configure an external health monitor if desired
 - Set environment variables in Render dashboard
 - Bot will auto-deploy on push to main

@@ -1,3 +1,5 @@
+"""Activation handlers: activation via '*' command or /activate."""
+
 import logging
 
 from vkbottle.bot import Blueprint, Message
@@ -14,10 +16,8 @@ chats_repo = ChatsRepository()
 members_repo = MembersRepository()
 
 
-@bp.on.message(text=config.activation_command)
-@bp.on.message(text="*")
-@bp.on.message(command="activate")
-async def activate_chat(message: Message):
+async def _activate_in_chat(message: Message) -> None:
+    """Shared activation routine for /activate and * commands."""
     chat_id = message.peer_id
     user_id = message.from_id
     if chat_id < 2_000_000_000:
@@ -58,8 +58,21 @@ async def activate_chat(message: Message):
     )
 
 
-@bp.on.message(command="deactivate")
+@bp.on.chat_message(command="activate")
+async def activate_chat(message: Message):
+    """Activate chat: /activate"""
+    await _activate_in_chat(message)
+
+
+@bp.on.chat_message(regex=r"^\*$")
+async def activate_star_handler(message: Message):
+    """Activate chat: *"""
+    await _activate_in_chat(message)
+
+
+@bp.on.chat_message(command="deactivate")
 async def deactivate_chat(message: Message):
+    """Deactivate chat: /deactivate"""
     chat_id = message.peer_id
     if chat_id < 2_000_000_000:
         await message.answer("❌ Деактивация доступна только в беседах.")

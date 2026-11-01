@@ -46,8 +46,10 @@ def _target_from_args(message: Message, args: list[str]) -> tuple[Optional[int],
     if message.reply_message and message.reply_message.from_id > 0:
         return message.reply_message.from_id, args
     if args:
-        match = TARGET_PATTERN.search(args[0])
-        token = match.group(1) if match else args[0].lstrip("id@")
+        token = args[0]
+        if token.startswith("[") and "|" in token:
+            token = token.split("|")[0].replace("[id", "").replace("]", "")
+        token = token.lstrip("@").strip()
         if token.isdigit() and int(token) > 0:
             return int(token), args[1:]
     return None, args
@@ -158,7 +160,7 @@ async def command_router(message: Message):
                     "chat_id": chat_id, "voter_id": user_id, "target_id": target_id
                 }).execute()
             except Exception as exc:
-                if getattr(exc, "code", None) == "23505":
+                if getattr(exc, "code", None) == 23505 or getattr(exc, "pgcode", None) == "23505":
                     await message.answer("Вы уже голосовали за этого пользователя.")
                     return
                 raise
@@ -344,8 +346,8 @@ async def command_router(message: Message):
             text_to_send = await vk_api.mention_all(chat_id, config.max_mentions_per_zov)
             if not text_to_send:
                 await message.answer("Не удалось получить список участников.")
-            else:
-                await message.answer(f"📢 Внимание!\n{text_to_send}")
+                return
+            await message.answer(f"📢 Внимание!\n{text_to_send}")
             return
         if command in {"snick", "rnick"}:
             target_id, rest = _target_from_args(message, args)
