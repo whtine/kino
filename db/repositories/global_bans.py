@@ -1,5 +1,6 @@
 from db.supabase import get_supabase
 from typing import Optional, Dict, Any, List
+from datetime import datetime, timedelta, timezone
 
 
 class GlobalBansRepository:
@@ -9,16 +10,27 @@ class GlobalBansRepository:
 
     # Global Bans
     async def ban(
-        self, group_id: int, user_id: int, reason: str, banned_by: int
+        self,
+        group_id: int,
+        user_id: int,
+        reason: str,
+        banned_by: int,
+        duration: Optional[timedelta] = None,
     ) -> Optional[Dict[str, Any]]:
         """Add global ban."""
         sb = get_supabase()
-        result = sb.table(self.bans_table).upsert({
+        data = {
             "group_id": group_id,
             "user_id": user_id,
             "reason": reason,
-            "banned_by": banned_by
-        }).select("user_id").execute()
+            "banned_by": banned_by,
+            "expires_at": (
+                (datetime.now(timezone.utc) + duration).isoformat()
+                if duration
+                else None
+            ),
+        }
+        result = sb.table(self.bans_table).upsert(data).select("user_id").execute()
         return result.data[0] if result.data else None
 
     async def unban(self, group_id: int, user_id: int) -> bool:
@@ -34,13 +46,35 @@ class GlobalBansRepository:
         """Check if user is globally banned in group."""
         sb = get_supabase()
         result = sb.table(self.bans_table).select("*").eq("group_id", group_id).eq("user_id", user_id).limit(1).execute()
-        return result.data[0] if result.data else None
+        if not result.data:
+            return None
+        ban = result.data[0]
+        expires_at = ban.get("expires_at")
+        if expires_at:
+            expiration = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if expiration.tzinfo is None:
+                expiration = expiration.replace(tzinfo=timezone.utc)
+            if expiration <= datetime.now(timezone.utc):
+                return None
+        return ban
 
     async def get_banned_list(self, group_id: int) -> List[Dict[str, Any]]:
         """Get all global bans in group."""
         sb = get_supabase()
         result = sb.table(self.bans_table).select("*").eq("group_id", group_id).execute()
-        return result.data or []
+        now = datetime.now(timezone.utc)
+        active = []
+        for ban in result.data or []:
+            expires_at = ban.get("expires_at")
+            if not expires_at:
+                active.append(ban)
+                continue
+            expiration = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if expiration.tzinfo is None:
+                expiration = expiration.replace(tzinfo=timezone.utc)
+            if expiration > now:
+                active.append(ban)
+        return active
 
     # Global Nicknames
     async def set_nickname(

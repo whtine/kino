@@ -51,6 +51,7 @@ CREATE TABLE global_bans (
     user_id BIGINT NOT NULL,
     reason TEXT,
     banned_by BIGINT,                   -- moderator who banned
+    expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (group_id, user_id)
 );
@@ -102,6 +103,7 @@ CREATE TABLE chat_bans (
     user_id BIGINT NOT NULL,
     reason TEXT,
     banned_by BIGINT NOT NULL,
+    expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     PRIMARY KEY (chat_id, user_id)
 );

@@ -14,13 +14,13 @@ VK Bot for chat moderation with role-based permissions (levels 0-6), Supabase da
 ### 2. Role System (0-6)
 | Level | Name | Key Commands |
 |-------|------|--------------|
-| 0 | Пользователь | /id, /stats, /top, /chatid, /rep, /help |
-| 1 | Младший модератор | /kick, /mute, /warn, /clear, /staff, /olist, /getnick, /snick, /rnick, /nlist, /check, /gnick, /getwarn |
-| 2 | Модератор | /unmute, /unwarn, /mutelist, /warnlist, /addmlmoder, /delmlmoder |
-| 3 | Старший модератор | /ban, /unban, /timeout, /zov, /addmoder, /logs |
-| 4 | Администратор | /skick, /gban, /gunban, /gsnick, /grnick, /gzov, /addstmoder |
-| 5 | Старший администратор | /chat, /antitag, /pin, /unpin, /addadmin |
-| 6 | Спец. права | /mygroups, /creategroup, /delgroup, /async, /bind, /giveowner, /settings, /import, /bindlist |
+| 0 | Участник | /id, /stats, /top, /chatid, /rep, /help |
+| 1 | Модератор фильмов | /kick, /mute, /warn, /clear, /staff, /getnick, /snick, /rnick, /nlist, /getwarn |
+| 2 | Администратор | /unmute, /unwarn, /mutelist, /warnlist, /addmoder, /delmoder |
+| 3 | Зам. главы отдела кинопоказов | /ban, /unban, /timeout, /zov, /addadmin, /deladmin, /sban, /sunban, /ssnick, /srnick, /skick, /szov, /pin, /unpin |
+| 4 | Глава отдела кинопоказов | /addzam, /delzam, /otdel, /bind, /unbind, /bindlist, /delotdel, /giveowner, /myotdel, /settings |
+| 5 | Старший администратор (legacy) | /chat, /antitag, /info settings |
+| 6 | Спец. права | /deactivate and initial setup |
 
 ### 3. Database (Supabase/PostgreSQL)
 Tables:
@@ -38,6 +38,9 @@ Tables:
 - **Nicknames**: local (per chat) and global (per group)
 - **Roles**: assign/remove roles with commands
 - **Global commands**: apply to all chats in a group
+- **Department commands**: `/sban`, `/sunban`, `/ssnick`, `/srnick`, `/skick`, and `/szov` target bound chats; duplicate `/bind` calls do not report a new binding
+- **Mute enforcement**: messages including slash commands are removed until expiry; mute duration is limited to 15–450 minutes
+- **Ban expiry**: local and department bans can last up to 350 days, or permanently when no duration is supplied
 - **Statistics**: message tracking, top users
 - **Logs**: punishment history, user logs
 - **Timeout/silence mode**: temporary chat mute

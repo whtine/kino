@@ -20,7 +20,11 @@ from bot.utils.formatters import (
     format_user_mention,
 )
 from bot.utils.permissions import get_required_role, get_role_name
-from bot.keyboards import get_help_keyboard, get_punishment_keyboard
+from bot.keyboards import (
+    get_help_keyboard,
+    get_nick_list_keyboard,
+    get_punishment_keyboard,
+)
 from bot.utils.vk_api import vk_api
 from config import config
 from db.repositories.chats import ChatsRepository
@@ -45,6 +49,17 @@ _SEEN_MESSAGE_TTL_SECONDS = 120
 _MAX_SEEN_MESSAGES = 4096
 _seen_messages: OrderedDict[tuple[int, int], float] = OrderedDict()
 _CLEAR_RESULT_DELETE_DELAY_SECONDS = 5 * 60
+_NICK_LIST_PAGE_SIZE = 10
+_COMMAND_ALIASES = {
+    "sban": "gban",
+    "sunban": "gunban",
+    "ssnick": "gsnick",
+    "srnick": "grnick",
+    "szov": "gzov",
+    "otdel": "creategroup",
+    "delotdel": "delgroup",
+    "myotdel": "mygroups",
+}
 
 
 def _parts(text: str) -> tuple[str, list[str]]:
@@ -157,6 +172,77 @@ async def _add_log(
     return record
 
 
+async def _revoke_role_after_removal(
+    chat_id: int, target_id: int, actor_id: int, reason: str
+) -> None:
+    previous_role = await members.get_role(chat_id, target_id)
+    if previous_role == 0:
+        return
+    if not await members.set_role(chat_id, target_id, 0):
+        raise RuntimeError(f"Не удалось снять роль пользователя {target_id}.")
+    await _add_log(
+        chat_id,
+        target_id,
+        actor_id,
+        "role_change",
+        f"Роль: {get_role_name(previous_role)} ({previous_role}) → "
+        f"{get_role_name(0)} (0). {reason}",
+    )
+
+
+async def _owned_group_for(owner_id: int, reference: str) -> Optional[dict]:
+    owned_groups = await groups.get_by_owner(owner_id)
+    reference = reference.strip()
+    if reference.isdigit():
+        group_id = int(reference)
+        return next((item for item in owned_groups if item["id"] == group_id), None)
+    normalized = reference.casefold()
+    return next(
+        (
+            item
+            for item in owned_groups
+            if str(item["name"]).casefold() == normalized
+        ),
+        None,
+    )
+
+
+async def _render_nick_list(
+    chat_id: int, page: int
+) -> tuple[str, str]:
+    entries = [
+        entry
+        for entry in await members.get_all_in_chat(chat_id)
+        if entry.get("nickname")
+    ]
+    entries.sort(
+        key=lambda entry: (
+            str(entry["nickname"]).casefold(),
+            int(entry["user_id"]),
+        )
+    )
+    page_count = max(1, (len(entries) + _NICK_LIST_PAGE_SIZE - 1) // _NICK_LIST_PAGE_SIZE)
+    page = max(0, min(page, page_count - 1))
+    start = page * _NICK_LIST_PAGE_SIZE
+    current_page = entries[start:start + _NICK_LIST_PAGE_SIZE]
+    names = (
+        await vk_api.get_member_names(
+            chat_id, [int(entry["user_id"]) for entry in current_page]
+        )
+        if vk_api
+        else {}
+    )
+    lines = [f"🏷 Пользователей с ником: {len(entries)}"]
+    for index, entry in enumerate(current_page, start=1):
+        user_id = int(entry["user_id"])
+        name = names.get(user_id) or f"ID {user_id}"
+        lines.append(
+            f"{start + index}) [id{user_id}|{name}] — {entry['nickname']}"
+        )
+    lines.append(f"Страница {page + 1}/{page_count}")
+    return "\n".join(lines), get_nick_list_keyboard(page, page_count)
+
+
 async def _delete_clear_messages_later(chat_id: int, cmids: list[int]) -> None:
     await asyncio.sleep(_CLEAR_RESULT_DELETE_DELAY_SECONDS)
     if not vk_api or not await vk_api.delete_message(chat_id, cmids):
@@ -192,6 +278,7 @@ async def command_router(message: Message):
         command, args = _parts(text)
     else:
         return
+    command = _COMMAND_ALIASES.get(command, command)
     activation_command = str(config.activation_command or "/activate").strip()
     activation_command = activation_command.lstrip("/").split("@", 1)[0].lower()
     if command in {"activate", "deactivate", activation_command}:
@@ -396,13 +483,28 @@ async def command_router(message: Message):
             if not staff:
                 await message.answer("👮 Администрация не найдена.")
                 return
-            lines = ["👮 Состав администрации:"]
-            for entry in staff:
-                nick = entry.get("nickname") or "пользователь"
-                lines.append(
-                    f"• [id{entry['user_id']}|{nick}] — "
-                    f"{get_role_name(entry['role'])} ({entry['role']})"
+            names = (
+                await vk_api.get_member_names(
+                    chat_id, [int(entry["user_id"]) for entry in staff]
                 )
+                if vk_api
+                else {}
+            )
+            employees = [entry for entry in staff if 1 <= entry["role"] < 2]
+            administrators = [entry for entry in staff if entry["role"] >= 2]
+            lines = ["Сотрудники отдела:"]
+            lines.extend(
+                f"• [id{entry['user_id']}|"
+                f"{entry.get('nickname') or names.get(entry['user_id']) or entry['user_id']}]"
+                for entry in employees
+            )
+            lines.append("\nАдминистраторы чата:")
+            lines.extend(
+                f"• [id{entry['user_id']}|"
+                f"{entry.get('nickname') or names.get(entry['user_id']) or entry['user_id']}] "
+                f"— {get_role_name(entry['role'])}"
+                for entry in administrators
+            )
             await message.answer("\n".join(lines))
             return
         if command == "check":
@@ -423,19 +525,45 @@ async def command_router(message: Message):
                 target_id = user_id
             entry = await members.get_or_create(chat_id, target_id)
             await message.answer(
-                f"⚠️ У {format_user_mention(target_id)} {entry.get('warns', 0)} предупреждений."
+                f"⚠️ У {format_user_mention(target_id)} "
+                f"{entry.get('warns', 0)} предупреждений "
+                f"({entry.get('warns', 0)}/3)."
             )
             return
         if command == "warn":
             target_id, rest = _target_from_args(message, args)
             if not target_id:
-                await message.answer("Использование: /warn [id] причина (или ответьте на сообщение)")
+                await message.answer(
+                    "Использование: /warn [id] | [1–3] | причина "
+                    "(или ответьте на сообщение)"
+                )
                 return
             if not await _can_moderate(message, chat_id, user_id, target_id):
                 return
-            reason = " ".join(rest) or None
-            count = await members.add_warn(chat_id, target_id)
-            record = await _add_log(chat_id, target_id, user_id, "warn", reason)
+            warn_count = 1
+            if "|" in rest:
+                parts = " ".join(rest).split("|")
+                if len(parts) >= 2 and parts[1].strip().isdigit():
+                    warn_count = int(parts[1].strip())
+                    reason = "|".join(parts[2:]).strip() or None
+                else:
+                    reason = "|".join(parts[1:]).strip() or None
+            elif rest and rest[0].isdigit() and 1 <= int(rest[0]) <= 3:
+                warn_count = int(rest[0])
+                reason = " ".join(rest[1:]) or None
+            else:
+                reason = " ".join(rest) or None
+            if not 1 <= warn_count <= 3:
+                await message.answer("Можно выдать от 1 до 3 выговоров за раз.")
+                return
+            target_member = await members.get_or_create(chat_id, target_id)
+            if int(target_member.get("warns", 0)) + warn_count > 3:
+                await message.answer("У пользователя уже достигнут лимит в 3 выговора.")
+                return
+            count = await members.add_warn(chat_id, target_id, warn_count)
+            record = None
+            for _ in range(warn_count):
+                record = await _add_log(chat_id, target_id, user_id, "warn", reason)
             names = (
                 await vk_api.get_member_names(chat_id, [user_id, target_id])
                 if vk_api
@@ -444,20 +572,69 @@ async def command_router(message: Message):
             moderator = format_user_mention(user_id, names.get(user_id))
             target = format_user_mention(target_id, names.get(target_id))
             await message.answer(
-                f"⚠️ {moderator} выдал предупреждение {target}.\n"
-                f"Причина: {reason or 'не указана'}\n"
-                f"Активных предупреждений: {count}.",
-                keyboard=get_punishment_keyboard("unwarn", target_id, record["id"]),
+                f"⚠️ {moderator} выдал {_count_word(warn_count)} "
+                f"{'выговор' if warn_count == 1 else 'выговора'} сотруднику {target}.\n"
+                f"По причине: {reason or 'не указана'}\n"
+                f"Итог: {count}/3.",
+                keyboard=get_punishment_keyboard(
+                    "unwarn", target_id, record["id"] if record else None
+                ),
             )
             return
-        if command in {"kick", "ban", "skick"}:
+        if command == "skick":
+            target_id, rest = _target_from_args(message, args)
+            group_id = await _bound_group(chat_id)
+            if not target_id or not group_id:
+                await message.answer(
+                    "Укажите пользователя и привяжите беседу к отделу."
+                )
+                return
+            if not await _can_moderate(message, chat_id, user_id, target_id):
+                return
+            reason = " ".join(rest) or None
+            bound_chats = await groups.get_bound_chats(group_id)
+            kicked = 0
+            failures = 0
+            for bound_chat in bound_chats:
+                if not vk_api or not await vk_api.kick_user(bound_chat, target_id):
+                    failures += 1
+                    continue
+                kicked += 1
+                await _add_log(bound_chat, target_id, user_id, "skick", reason)
+                await _revoke_role_after_removal(
+                    bound_chat, target_id, user_id, "Снята при исключении из отдела."
+                )
+            names = (
+                await vk_api.get_member_names(chat_id, [user_id, target_id])
+                if vk_api
+                else {}
+            )
+            await message.answer(
+                f"👢 {format_user_mention(user_id, names.get(user_id))} исключил "
+                f"{format_user_mention(target_id, names.get(target_id))} "
+                f"из бесед отдела: {kicked}. Ошибок: {failures}. "
+                f"Причина: {reason or 'не указана'}."
+            )
+            return
+        if command in {"kick", "ban"}:
             target_id, rest = _target_from_args(message, args)
             if not target_id:
                 await message.answer(f"Использование: /{command} [id] причина (или ответьте на сообщение)")
                 return
             if not await _can_moderate(message, chat_id, user_id, target_id):
                 return
-            reason = " ".join(rest) or None
+            duration, duration_tokens = _duration_from_args(rest)
+            if command == "ban" and duration_tokens and not duration:
+                await message.answer("Срок блокировки должен быть положительным.")
+                return
+            if command == "ban" and duration and duration > timedelta(days=350):
+                await message.answer("Срок блокировки должен быть не более 350 дней.")
+                return
+            if command == "ban" and duration_tokens:
+                reason = " ".join(rest[duration_tokens:]) or None
+            else:
+                duration = None
+                reason = " ".join(rest) or None
             if command == "ban":
                 from db.supabase import get_supabase
                 result = get_supabase().table("chat_bans").upsert({
@@ -465,6 +642,11 @@ async def command_router(message: Message):
                     "user_id": target_id,
                     "reason": reason,
                     "banned_by": user_id,
+                    "expires_at": (
+                        (datetime.now(timezone.utc) + duration).isoformat()
+                        if duration
+                        else None
+                    ),
                 }).select("user_id").execute()
                 if not result.data:
                     raise RuntimeError("Не удалось сохранить локальную блокировку.")
@@ -472,7 +654,11 @@ async def command_router(message: Message):
             if not kicked and command != "ban":
                 await message.answer("❌ Не удалось исключить пользователя. Проверьте права бота.")
                 return
-            record = await _add_log(chat_id, target_id, user_id, command, reason)
+            record = await _add_log(chat_id, target_id, user_id, command, reason, duration)
+            if kicked or command == "ban":
+                await _revoke_role_after_removal(
+                    chat_id, target_id, user_id, "Снята при исключении из беседы."
+                )
             names = (
                 await vk_api.get_member_names(chat_id, [user_id, target_id])
                 if vk_api
@@ -481,12 +667,16 @@ async def command_router(message: Message):
             moderator = format_user_mention(user_id, names.get(user_id))
             target = format_user_mention(target_id, names.get(target_id))
             action_text = {
-                "ban": "заблокировал и исключил",
-                "skick": "исключил с проверкой роли",
+                "ban": "заблокировал в чате",
                 "kick": "исключил",
             }[command]
+            duration_text = (
+                f" на {duration.days} дней" if duration and duration.days else
+                f" на {format_duration(duration)}" if duration else
+                " навсегда" if command == "ban" else ""
+            )
             notice = (
-                f"👢 {moderator} {action_text} {target}.\n"
+                f"👢 {moderator} {action_text} {target}{duration_text}.\n"
                 f"Причина: {reason or 'не указана'}"
             )
             if command == "ban" and not kicked:
@@ -506,7 +696,7 @@ async def command_router(message: Message):
                 )
             return
         if command == "unban":
-            target_id, _ = _target_from_args(message, args)
+            target_id, rest = _target_from_args(message, args)
             if not target_id:
                 await message.answer("Укажите ID пользователя.")
                 return
@@ -527,21 +717,35 @@ async def command_router(message: Message):
             if not deleted.data:
                 await message.answer("Блокировка уже была снята.")
                 return
-            await _add_log(chat_id, target_id, user_id, "unban")
+            reason = " ".join(rest).strip() or None
+            await _add_log(chat_id, target_id, user_id, "unban", reason)
             if not vk_api or not await vk_api.add_chat_user(chat_id, target_id):
-                await message.answer("✅ Блокировка снята, но добавить пользователя обратно не удалось.")
+                await message.answer(
+                    "✅ Блокировка снята, но добавить пользователя обратно не удалось.\n"
+                    f"Причина: {reason or 'не указана'}."
+                )
                 return
-            await message.answer(f"✅ Блокировка {format_user_mention(target_id)} снята.")
+            await message.answer(
+                f"✅ Блокировка в чате с {format_user_mention(target_id)} снята.\n"
+                f"Причина: {reason or 'не указана'}."
+            )
             return
         if command == "mute":
             target_id, rest = _target_from_args(message, args)
-            duration = _parse_duration_arg(rest)
+            duration, duration_tokens = _duration_from_args(rest)
             if not target_id or not duration:
-                await message.answer("Использование: /mute [id] время причина (например, /mute 123 30м флуд)")
+                await message.answer(
+                    "Использование: /mute [id] 15–450м причина "
+                    "(например, /mute 123 30 минут флуд)."
+                )
+                return
+            duration_minutes = int(duration.total_seconds() // 60)
+            if not 15 <= duration_minutes <= 450:
+                await message.answer("Срок мута должен быть от 15 до 450 минут.")
                 return
             if not await _can_moderate(message, chat_id, user_id, target_id):
                 return
-            reason = " ".join(rest[1:]) or None
+            reason = " ".join(rest[duration_tokens:]) or None
             expires = datetime.now(timezone.utc) + duration
             if not await members.set_mute(chat_id, target_id, True, expires.isoformat()):
                 raise RuntimeError("Не удалось сохранить статус мута.")
@@ -554,14 +758,14 @@ async def command_router(message: Message):
             moderator = format_user_mention(user_id, names.get(user_id))
             target = format_user_mention(target_id, names.get(target_id))
             await message.answer(
-                f"🔇 {moderator} выдал мут {target}.\n"
+                f"🔇 {moderator} выдал затычку в чате пользователю {target}.\n"
                 f"Причина: {reason or 'не указана'}\n"
-                f"Срок: {format_duration(duration)}.",
+                f"Сколько осталось до снятия мута: {format_duration(duration)}.",
                 keyboard=get_punishment_keyboard("unmute", target_id, record["id"]),
             )
             return
         if command == "unmute":
-            target_id, _ = _target_from_args(message, args)
+            target_id, rest = _target_from_args(message, args)
             if not target_id:
                 await message.answer("Укажите ID или ответьте на сообщение пользователя.")
                 return
@@ -569,19 +773,39 @@ async def command_router(message: Message):
                 return
             if not await members.set_mute(chat_id, target_id, False):
                 raise RuntimeError("Не удалось снять мут.")
-            await _add_log(chat_id, target_id, user_id, "unmute")
-            await message.answer(f"🔊 Мут {format_user_mention(target_id)} снят.")
+            reason = " ".join(rest).strip() or None
+            await _add_log(chat_id, target_id, user_id, "unmute", reason)
+            await message.answer(
+                f"🔊 Затычка в чате с {format_user_mention(target_id)} снята.\n"
+                f"Причина: {reason or 'не указана'}."
+            )
             return
         if command == "unwarn":
-            target_id, _ = _target_from_args(message, args)
+            target_id, rest = _target_from_args(message, args)
             if not target_id:
                 await message.answer("Укажите ID или ответьте на сообщение пользователя.")
                 return
             if not await _can_moderate(message, chat_id, user_id, target_id):
                 return
-            count = await members.remove_warn(chat_id, target_id)
-            await _add_log(chat_id, target_id, user_id, "unwarn")
-            await message.answer(f"✅ Предупреждение снято. Осталось: {count}.")
+            amount = int(rest[0]) if rest and rest[0].isdigit() else 1
+            if not 1 <= amount <= 3:
+                await message.answer("Можно снять от 1 до 3 выговоров за раз.")
+                return
+            target_member = await members.get_or_create(chat_id, target_id)
+            current_warns = int(target_member.get("warns", 0))
+            if current_warns < amount:
+                await message.answer(
+                    f"У пользователя только {current_warns} активных выговоров."
+                )
+                return
+            count = await members.remove_warn(chat_id, target_id, amount)
+            for _ in range(amount):
+                await _add_log(chat_id, target_id, user_id, "unwarn")
+            await message.answer(
+                f"✅ {format_user_mention(user_id)} снял {_count_word(amount)} "
+                f"{'выговор' if amount == 1 else 'выговора'} с "
+                f"{format_user_mention(target_id)}.\nИтог: {count}/3."
+            )
             return
         if command == "clear":
             reply = message.reply_message
@@ -694,10 +918,16 @@ async def command_router(message: Message):
             await message.answer("\n".join(lines) if rows else "Записей нет.")
             return
         if command == "timeout":
-            enabled = bool(args and args[0].lower() in {"on", "вкл", "1"})
-            if not args or args[0].lower() not in {"on", "off", "вкл", "выкл", "1", "0"}:
-                await message.answer("Использование: /timeout on|off")
-                return
+            if args:
+                if args[0].lower() not in {"on", "off", "вкл", "выкл", "1", "0"}:
+                    await message.answer("Использование: /timeout [on|off]")
+                    return
+                enabled = args[0].lower() in {"on", "вкл", "1"}
+            else:
+                current = await chats.get(chat_id)
+                enabled = not bool(
+                    ((current or {}).get("settings") or {}).get("timeout")
+                )
             if not await chats.update_settings(chat_id, {"timeout": enabled}):
                 raise RuntimeError("Не удалось сохранить режим тишины.")
             await message.answer(f"🔕 Режим тишины {'включён' if enabled else 'выключен'}.")
@@ -774,35 +1004,24 @@ async def command_router(message: Message):
             target_id, _ = _target_from_args(message, args)
             target_id = target_id or user_id
             nickname = await members.get_nickname(chat_id, target_id)
-            await message.answer(f"🏷 Ник: {nickname or 'не установлен'}")
+            names = await vk_api.get_member_names(chat_id, [target_id]) if vk_api else {}
+            await message.answer(
+                f"🏷 Текущий ник пользователя "
+                f"{format_user_mention(target_id, names.get(target_id))}: "
+                f"{nickname or 'не установлен'}."
+            )
             return
         if command == "nlist":
-            entries = await members.get_all_in_chat(chat_id)
-            entries = [entry for entry in entries if entry.get("nickname")]
+            entries = [
+                entry
+                for entry in await members.get_all_in_chat(chat_id)
+                if entry.get("nickname")
+            ]
             if not entries:
                 await message.answer("📋 Пользователей с ником нет.")
                 return
-            entries.sort(
-                key=lambda entry: (
-                    str(entry["nickname"]).casefold(),
-                    int(entry["user_id"]),
-                )
-            )
-            names = (
-                await vk_api.get_member_names(
-                    chat_id, [int(entry["user_id"]) for entry in entries]
-                )
-                if vk_api
-                else {}
-            )
-            lines = [f"🏷 Пользователей с ником: {len(entries)}"]
-            for index, entry in enumerate(entries, start=1):
-                user_id = int(entry["user_id"])
-                vk_name = names.get(user_id) or f"ID {user_id}"
-                lines.append(
-                    f"{index}) [id{user_id}|{vk_name}] — {entry['nickname']}"
-                )
-            await message.answer("\n".join(lines))
+            text, keyboard = await _render_nick_list(chat_id, 0)
+            await message.answer(text, keyboard=keyboard)
             return
         if command == "gnick":
             target_id, _ = _target_from_args(message, args)
@@ -851,41 +1070,47 @@ async def command_router(message: Message):
         if command == "mygroups":
             user_groups = await groups.get_by_owner(user_id)
             await message.answer(
-                "\n".join(f"• {item['id']}: {item['name']}" for item in user_groups)
-                if user_groups else "У вас пока нет групп."
+                "Ваши отделы:\n"
+                + "\n".join(f"• {item['name']} (ID: {item['id']})" for item in user_groups)
+                if user_groups
+                else "У вас пока нет отделов."
             )
             return
         if command == "creategroup":
             name = " ".join(args).strip()
             if not name:
-                await message.answer("Укажите название: /creategroup название")
+                await message.answer("Укажите название отдела: /otdel Название")
                 return
             group = await groups.create(name[:100], user_id)
-            await message.answer(f"✅ Группа «{group['name']}» создана. ID: {group['id']}")
+            await message.answer(f"✅ Отдел «{group['name']}» создан. ID: {group['id']}")
             return
         if command == "delgroup":
-            if not args or not args[0].isdigit():
-                await message.answer("Использование: /delgroup ID")
+            reference = " ".join(args).strip()
+            if not reference:
+                await message.answer("Использование: /delotdel Название отдела")
                 return
-            group_id = int(args[0])
-            group = await groups.get(group_id)
-            if not group or group["owner_id"] != user_id:
-                await message.answer("Группа не найдена или вы не её владелец.")
+            group = await _owned_group_for(user_id, reference)
+            if not group:
+                await message.answer("Отдел не найден среди ваших отделов.")
                 return
-            if not await groups.delete(group_id):
-                raise RuntimeError("Не удалось удалить группу.")
-            await message.answer("✅ Группа удалена.")
+            if not await groups.delete(group["id"]):
+                raise RuntimeError("Не удалось удалить отдел.")
+            await message.answer(f"✅ Отдел «{group['name']}» удалён.")
             return
         if command == "bind":
-            if not args or not args[0].isdigit():
-                await message.answer("Использование: /bind ID_группы")
+            reference = " ".join(args).strip()
+            if not reference:
+                await message.answer("Использование: /bind Название отдела")
                 return
-            group_id = int(args[0])
-            group = await groups.get(group_id)
-            if not group or group["owner_id"] != user_id:
-                await message.answer("Группа не найдена или вы не её владелец.")
+            group = await _owned_group_for(user_id, reference)
+            if not group:
+                await message.answer("Отдел не найден среди ваших отделов.")
                 return
+            group_id = group["id"]
             current_group_id = await _bound_group(chat_id)
+            if current_group_id == group_id:
+                await message.answer(f"Эта беседа уже привязана к отделу «{group['name']}».")
+                return
             if current_group_id and current_group_id != group_id:
                 current_group = await groups.get(current_group_id)
                 if not current_group or current_group["owner_id"] != user_id:
@@ -896,7 +1121,7 @@ async def command_router(message: Message):
                     return
             if not await chats.bind_group(chat_id, group_id):
                 raise RuntimeError("Не удалось привязать беседу.")
-            await message.answer(f"✅ Беседа привязана к группе «{group['name']}».")
+            await message.answer(f"✅ Беседа привязана к отделу «{group['name']}».")
             return
         if command == "unbind":
             group_id = await _bound_group(chat_id)
@@ -956,53 +1181,83 @@ async def command_router(message: Message):
             await message.answer("Привязанные беседы:\n" + "\n".join(map(str, bound)))
             return
         if command == "giveowner":
-            target_id, _ = _target_from_args(message, args)
-            group_id = await _bound_group(chat_id)
-            if not target_id or not group_id:
-                await message.answer("Укажите ID пользователя и привяжите беседу к группе.")
+            target_id, rest = _target_from_args(message, args)
+            if rest:
+                group = await _owned_group_for(user_id, " ".join(rest))
+            else:
+                bound_group_id = await _bound_group(chat_id)
+                group = await groups.get(bound_group_id) if bound_group_id else None
+            if not target_id or not group:
+                await message.answer(
+                    "Использование: /giveowner @username Название отдела."
+                )
                 return
-            group = await groups.get(group_id)
             if not group or group["owner_id"] != user_id:
                 await message.answer("⛔ Передать владельца может только владелец группы.")
                 return
-            if not await groups.update(group_id, {"owner_id": target_id}):
+            if not await groups.update(group["id"], {"owner_id": target_id}):
                 raise RuntimeError("Не удалось передать права владельца.")
             await _add_log(
                 chat_id,
                 target_id,
                 user_id,
                 "group_owner_change",
-                f"Группа {group_id}: владелец {user_id} → {target_id}",
+                f"Отдел {group['id']}: владелец {user_id} → {target_id}",
             )
-            await message.answer(f"✅ Владелец группы передан {format_user_mention(target_id)}.")
+            await message.answer(
+                f"✅ Владение отделом «{group['name']}» передано "
+                f"{format_user_mention(target_id)}."
+            )
             return
         if command == "gban":
             target_id, rest = _target_from_args(message, args)
             group_id = await _bound_group(chat_id)
             if not target_id or not group_id:
-                await message.answer("Укажите ID пользователя; беседа должна быть привязана к группе.")
+                await message.answer(
+                    "Укажите пользователя и привяжите беседу к отделу."
+                )
                 return
             if not await _can_moderate(message, chat_id, user_id, target_id):
                 return
-            reason = " ".join(rest) or None
-            if not await global_data.ban(group_id, target_id, reason or "", user_id):
+            duration, duration_tokens = _duration_from_args(rest)
+            if duration_tokens and not duration:
+                await message.answer("Срок блокировки должен быть положительным.")
+                return
+            if duration and duration > timedelta(days=350):
+                await message.answer("Срок блокировки должен быть не более 350 дней.")
+                return
+            reason = (
+                " ".join(rest[duration_tokens:]) if duration_tokens else " ".join(rest)
+            ) or None
+            if not await global_data.ban(
+                group_id, target_id, reason or "", user_id, duration
+            ):
                 raise RuntimeError("Не удалось сохранить глобальную блокировку.")
             failures = 0
             bound_chats = await groups.get_bound_chats(group_id)
             for bound_chat in bound_chats:
-                if vk_api:
-                    if not await vk_api.kick_user(bound_chat, target_id):
-                        failures += 1
-                else:
+                if not vk_api or not await vk_api.kick_user(bound_chat, target_id):
                     failures += 1
-            await _add_log(chat_id, target_id, user_id, "gban", reason)
+                await _revoke_role_after_removal(
+                    bound_chat,
+                    target_id,
+                    user_id,
+                    "Снята при глобальной блокировке.",
+                )
+            await _add_log(chat_id, target_id, user_id, "gban", reason, duration)
             status = f" Не удалось исключить из бесед: {failures}." if failures else ""
+            duration_text = (
+                f" на {duration.days} дней" if duration and duration.days else
+                f" на {format_duration(duration)}" if duration else
+                " навсегда"
+            )
             await message.answer(
-                f"🌐 {format_user_mention(target_id)} заблокирован в группе бесед.{status}"
+                f"🌐 {format_user_mention(target_id)} заблокирован во всех чатах "
+                f"отдела{duration_text}. Причина: {reason or 'не указана'}.{status}"
             )
             return
         if command == "gunban":
-            target_id, _ = _target_from_args(message, args)
+            target_id, rest = _target_from_args(message, args)
             group_id = await _bound_group(chat_id)
             if not target_id or not group_id:
                 await message.answer("Укажите ID пользователя; беседа должна быть привязана к группе.")
@@ -1011,8 +1266,13 @@ async def command_router(message: Message):
                 return
             removed = await global_data.unban(group_id, target_id)
             if removed:
-                await _add_log(chat_id, target_id, user_id, "gunban")
-                await message.answer("✅ Глобальная блокировка снята.")
+                reason = " ".join(rest).strip() or None
+                await _add_log(chat_id, target_id, user_id, "gunban", reason)
+                await message.answer(
+                    f"✅ Глобальная блокировка с "
+                    f"{format_user_mention(target_id)} снята во всех чатах отдела.\n"
+                    f"Причина: {reason or 'не указана'}."
+                )
             else:
                 await message.answer("Пользователь не найден в списке глобальных блокировок.")
             return
@@ -1023,7 +1283,7 @@ async def command_router(message: Message):
                 return
             sent = 0
             failures = 0
-            bound_chats = await groups.get_bound_chats(group_id)
+            bound_chats = await _active_bound_chats(group_id)
             for bound_chat in bound_chats:
                 mentions = await vk_api.mention_all(bound_chat, config.max_mentions_per_zov)
                 if not mentions:
@@ -1034,7 +1294,8 @@ async def command_router(message: Message):
                 else:
                     sent += 1
             await message.answer(
-                f"Зов отправлен в {sent} активных бесед(ы). Ошибок: {failures}."
+                f"Упоминание отправлено во все активные чаты отдела: {sent}. "
+                f"Ошибок: {failures}."
             )
             return
         if command == "pin":
@@ -1097,7 +1358,13 @@ async def command_router(message: Message):
         if command == "settings":
             if not args:
                 current = await chats.get(chat_id)
-                await message.answer(f"⚙️ Текущие настройки: {current.get('settings') or {}}")
+                settings = (current or {}).get("settings") or {}
+                await message.answer(
+                    "⚙️ Настройки беседы:\n"
+                    f"• Режим тишины: {'включён' if settings.get('timeout') else 'выключен'}\n"
+                    f"• Антитег: {'включён' if settings.get('antitag') else 'выключен'}\n"
+                    f"• Официальных ссылок: {len(settings.get('info_links') or [])}"
+                )
                 return
             key, _, value = " ".join(args).partition(" ")
             if key not in {"antitag", "timeout"} or value.lower() not in {
@@ -1117,13 +1384,25 @@ async def command_router(message: Message):
             await _assign_role(message, args, 0, user_id, chat_id)
             return
         if command == "addmoder":
+            await _assign_role(message, args, 1, user_id, chat_id)
+            return
+        if command == "delmoder":
+            await _assign_role(message, args, 0, user_id, chat_id)
+            return
+        if command == "addadmin":
+            await _assign_role(message, args, 2, user_id, chat_id)
+            return
+        if command == "deladmin":
+            await _assign_role(message, args, 1, user_id, chat_id)
+            return
+        if command == "addzam":
+            await _assign_role(message, args, 3, user_id, chat_id)
+            return
+        if command == "delzam":
             await _assign_role(message, args, 2, user_id, chat_id)
             return
         if command == "addstmoder":
             await _assign_role(message, args, 3, user_id, chat_id)
-            return
-        if command == "addadmin":
-            await _assign_role(message, args, 5, user_id, chat_id)
             return
         if command == "import":
             group_id = await _bound_group(chat_id)
@@ -1168,6 +1447,27 @@ async def help_level_callback(event: MessageEvent):
         return
     if payload.get("cmd") == "revoke_punishment":
         await _handle_punishment_callback(event, payload)
+        return
+    if payload.get("cmd") == "nlist_page":
+        page = payload.get("page")
+        if (
+            isinstance(page, bool)
+            or not isinstance(page, int)
+            or page < 0
+            or event.peer_id < 2_000_000_000
+            or await members.get_role(event.peer_id, event.user_id) < 1
+        ):
+            await event.show_snackbar("Недостаточно прав или неверная страница списка.")
+            return
+        try:
+            text, keyboard = await _render_nick_list(event.peer_id, page)
+            await event.edit_message(message=text, keyboard=keyboard)
+            await event.send_empty_answer()
+        except Exception:
+            logger.exception(
+                "Could not update nickname list in chat %s", event.peer_id
+            )
+            await event.show_snackbar("Не удалось обновить список ников.")
         return
     if payload.get("cmd") != "help_level":
         return
@@ -1324,6 +1624,12 @@ async def _assign_role(message: Message, args: list[str], role: int, actor_id: i
         return
     actor_role = await members.get_role(chat_id, actor_id)
     target_role = await members.get_role(chat_id, target_id)
+    if target_role == role:
+        await message.answer(
+            f"{format_user_mention(target_id)} уже занимает должность "
+            f"{get_role_name(role).lower()}."
+        )
+        return
     if target_id == actor_id or target_role >= actor_role or role >= actor_role:
         await message.answer("⛔ Нельзя изменять роль равного или старшего пользователя.")
         return
@@ -1344,22 +1650,52 @@ async def _assign_role(message: Message, args: list[str], role: int, actor_id: i
     )
     actor = format_user_mention(actor_id, names.get(actor_id) or f"ID {actor_id}")
     target = format_user_mention(target_id, names.get(target_id) or f"ID {target_id}")
-    await message.answer(
-        f"✅ {actor} назначил на должность "
-        f"{get_role_name(role).lower()} пользователя {target}."
-    )
+    if role > target_role:
+        action = f"повысил {target} на должность {get_role_name(role).lower()}"
+    elif role == 0:
+        action = (
+            f"снял {target} с должности "
+            f"{get_role_name(target_role).lower()}"
+        )
+    else:
+        action = f"понизил {target} до должности {get_role_name(role).lower()}"
+    await message.answer(f"✅ {actor} {action}.")
 
 
-def _parse_duration_arg(args: list[str]) -> Optional[timedelta]:
+def _duration_match(args: list[str]) -> tuple[Optional[re.Match], int]:
     if not args:
-        return None
-    match = re.fullmatch(r"(\d+)([смчд])", args[0].lower())
+        return None, 0
+    token = args[0].lower().rstrip(".")
+    match = re.fullmatch(
+        r"(\d+)\s*(с|сек(?:унд(?:а|ы)?)?|м|мин(?:ут(?:а|ы)?)?|"
+        r"ч|час(?:а|ов)?|д|дн(?:я|ей)?)",
+        token,
+    )
+    consumed = 1
+    if not match and len(args) > 1 and args[0].isdigit():
+        match = re.fullmatch(
+            r"(с|сек(?:унд(?:а|ы)?)?|м|мин(?:ут(?:а|ы)?)?|"
+            r"ч|час(?:а|ов)?|д|дн(?:я|ей)?)",
+            args[1].lower().rstrip("."),
+        )
+        if match:
+            match = re.match(r"(\d+)(.*)", f"{args[0]}{match.group(1)}")
+            consumed = 2
+    return match, consumed
+
+
+def _duration_from_args(args: list[str]) -> tuple[Optional[timedelta], int]:
+    match, consumed = _duration_match(args)
     if not match:
-        return None
+        return None, 0
     amount = int(match.group(1))
-    unit = match.group(2)
     if amount <= 0:
-        return None
+        return None, consumed
+    unit = match.group(2)[0]
     return timedelta(**{
         {"с": "seconds", "м": "minutes", "ч": "hours", "д": "days"}[unit]: amount
-    })
+    }), consumed
+
+
+def _count_word(count: int) -> str:
+    return {1: "один", 2: "два", 3: "три"}.get(count, str(count))

@@ -5,7 +5,7 @@ VK bot for chat moderation with role-based permissions (levels 0-6), Supabase da
 ## Features
 
 - **Activation system**: bot joins chat → inactive by default; a VK chat administrator activates it via `/activate` (or `*`), and receives role 6 for setup.
-- **Role system** (0-6): user, junior moderator, moderator, senior moderator, administrator, senior administrator, special rights.
+- **Role system**: 0 participant, 1 movie moderator, 2 administrator, 3 department deputy, 4 department head; legacy levels 5-6 remain available for senior administrator and setup rights.
 - **Moderation**: kick, mute, warn, clear, ban, timeout, logs.
 - **Nicknames**: local (per chat) and global (per group).
 - **Global commands**: /zov, /gzov, /antitag, /pin, /unpin, /gban, /gunban, /gsnick, /grnick.
@@ -43,11 +43,12 @@ Use the Supabase server-side secret key (`sb_secret_...`) or legacy `service_rol
 `GROUP_ID` is the VK community ID used by Long Poll, not a chat ID. No chat ID is configured in an environment variable; the bot can be activated independently in every conversation it joins.
 At startup, the bot enables the Long Poll `message_event` update used by inline buttons. If the group token cannot change Long Poll settings, the startup log will say so; enable **Message event** in the community's Long Poll event settings.
 
-3. Run the migrations in Supabase SQL Editor in order. If `001_init.sql` has already been applied, run only `002_feature_updates.sql`:
+3. Run the migrations in Supabase SQL Editor in order. Existing installations should apply any migrations they have not run yet:
 
 ```
 db/migrations/001_init.sql
 db/migrations/002_feature_updates.sql
+db/migrations/003_ban_expirations.sql
 ```
 
 4. Start the bot:
@@ -69,8 +70,8 @@ python main.py
 ## Commands
 
 See `bot/utils/permissions.py` (`COMMAND_PERMISSIONS`) for the full command → role mapping.
-Mute durations use `с`, `м`, `ч`, or `д` (for example, `/mute 123 30м флуд`).
-`/rep` allows one vote for each other user per chat. Cross-chat operations only target conversations explicitly linked to the same group with `/bind`; `/async timeout on|off` applies silence mode to those bound chats. The group owner can run `/unbind` to stop syncing a conversation.
+Mute durations accept Russian units (for example, `/mute 123 30м флуд` or `/mute 123 30 минут флуд`) and are limited to 15–450 minutes. Muted users' messages, including slash commands, are removed until expiry. Local and department bans may last up to 350 days; an omitted duration means permanent.
+`/rep` allows one vote for each other user per chat. Cross-chat operations only target conversations explicitly linked to the same department with `/bind`; `/sban`, `/sunban`, `/ssnick`, `/srnick`, `/skick`, and `/szov` act on the bound chats. `/async timeout on|off` applies silence mode to those chats. Department aliases are `/otdel`, `/delotdel`, and `/myotdel`.
 In an inactive chat, only `/start` and `/activate` (or `*`) are accepted. `/start` displays the activation button; inviting new members triggers a welcome message with `/info`.
 `/help` displays commands with descriptions; inline role buttons show only commands assigned to the selected level.
 `/info` lists the chat's official links. Role 5+ can add links with `/info add Label https://example.com` and remove them with `/info remove N`.

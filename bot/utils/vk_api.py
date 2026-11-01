@@ -89,6 +89,23 @@ class VKAPIWrapper:
             )
             return False
 
+    async def get_message_by_cmid(self, chat_id: int, cmid: int) -> Optional[Any]:
+        """Fetch one conversation message by its conversation message ID."""
+        try:
+            result = await self.api.messages.get_by_conversation_message_id(
+                peer_id=chat_id,
+                conversation_message_ids=[cmid],
+            )
+            items = getattr(result, "items", None) or []
+            return items[0] if items else None
+        except Exception:
+            logger.exception(
+                "Could not retrieve conversation message %s in chat %s",
+                cmid,
+                chat_id,
+            )
+            return None
+
     async def clear_recent_messages(
         self,
         chat_id: int,

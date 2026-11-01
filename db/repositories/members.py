@@ -63,18 +63,22 @@ class MembersRepository:
         member = await self.get(chat_id, user_id)
         return member.get("nickname") if member else None
 
-    async def add_warn(self, chat_id: int, user_id: int) -> int:
+    async def add_warn(self, chat_id: int, user_id: int, amount: int = 1) -> int:
         """Increment warns count, return new count."""
+        if amount < 1:
+            raise ValueError("Warning amount must be positive")
         member = await self.get_or_create(chat_id, user_id)
-        new_count = member.get("warns", 0) + 1
+        new_count = member.get("warns", 0) + amount
         if not await self.update(chat_id, user_id, {"warns": new_count}):
             raise RuntimeError(f"Could not update warnings for user {user_id}")
         return new_count
 
-    async def remove_warn(self, chat_id: int, user_id: int) -> int:
+    async def remove_warn(self, chat_id: int, user_id: int, amount: int = 1) -> int:
         """Decrement warns count, return new count (min 0)."""
+        if amount < 1:
+            raise ValueError("Warning amount must be positive")
         member = await self.get_or_create(chat_id, user_id)
-        new_count = max(0, member.get("warns", 0) - 1)
+        new_count = max(0, member.get("warns", 0) - amount)
         if not await self.update(chat_id, user_id, {"warns": new_count}):
             raise RuntimeError(f"Could not update warnings for user {user_id}")
         return new_count

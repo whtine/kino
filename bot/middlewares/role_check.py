@@ -55,7 +55,14 @@ class RoleCheckMiddleware(BaseMiddleware[Message]):
 class OwnerCheckMiddleware(BaseMiddleware[Message]):
     """Require a VK chat administrator for group ownership operations."""
 
-    OWNER_COMMANDS = {"creategroup", "bind", "unbind", "async", "giveowner"}
+    OWNER_COMMANDS = {
+        "creategroup",
+        "otdel",
+        "bind",
+        "unbind",
+        "async",
+        "giveowner",
+    }
 
     async def pre(self) -> None:
         message = self.event

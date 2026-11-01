@@ -51,3 +51,17 @@ def get_help_keyboard(user_role: int, selected_level: int = 0) -> str:
         if level % 2 == 1:
             keyboard.row()
     return keyboard.get_json()
+
+
+def get_nick_list_keyboard(page: int, page_count: int) -> str:
+    """Build inline paging controls for /nlist."""
+    keyboard = Keyboard(one_time=False, inline=True)
+    if page > 0:
+        keyboard.add(
+            Callback("← Назад", json.dumps({"cmd": "nlist_page", "page": page - 1}))
+        )
+    if page + 1 < page_count:
+        keyboard.add(
+            Callback("Далее →", json.dumps({"cmd": "nlist_page", "page": page + 1}))
+        )
+    return keyboard.get_json()

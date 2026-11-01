@@ -10,11 +10,13 @@ from bot.utils.context import get_chat_id
 from bot.utils.vk_api import vk_api
 from config import config
 from db.repositories.chats import ChatsRepository
+from db.repositories.global_bans import GlobalBansRepository
 from db.repositories.members import MembersRepository
 
 logger = logging.getLogger(__name__)
 chats_repo = ChatsRepository()
 members_repo = MembersRepository()
+global_bans_repo = GlobalBansRepository()
 ALLOWED_COMMANDS = {"activate", "start"}
 
 
@@ -60,10 +62,27 @@ class ActivationMiddleware(BaseMiddleware[Message]):
         if command in ALLOWED_COMMANDS or command == activation_command or text == "*":
             return
 
-        if message.from_id > 0 and not (getattr(message, "text", None) or "").strip().startswith("/"):
+        if message.from_id > 0:
             if await members_repo.is_muted(chat_id, message.from_id):
                 await self._delete_message(message, chat_id)
                 self.stop(f"Пользователь {message.from_id} замучен")
+                return
+
+            group_id = chat.get("group_id")
+            is_banned = await chats_repo.is_banned(chat_id, message.from_id)
+            if group_id:
+                is_banned = is_banned or bool(
+                    await global_bans_repo.is_banned(group_id, message.from_id)
+                )
+            if is_banned:
+                await self._delete_message(message, chat_id)
+                if vk_api and not await vk_api.kick_user(chat_id, message.from_id):
+                    logger.error(
+                        "Could not enforce active ban for user %s in chat %s",
+                        message.from_id,
+                        chat_id,
+                    )
+                self.stop(f"Пользователь {message.from_id} заблокирован в беседе")
                 return
 
         settings = chat.get("settings") or {}

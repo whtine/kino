@@ -1,5 +1,6 @@
 from db.supabase import get_supabase
 from typing import Optional, Dict, Any, List
+from datetime import datetime, timezone
 import logging
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,23 @@ class ChatsRepository:
         sb = get_supabase()
         result = sb.table(self.table).select("*").eq("is_active", True).execute()
         return result.data or []
+
+    async def is_banned(self, chat_id: int, user_id: int) -> bool:
+        """Check whether a local chat ban is still active."""
+        sb = get_supabase()
+        result = (
+            sb.table("chat_bans").select("expires_at")
+            .eq("chat_id", chat_id).eq("user_id", user_id).limit(1).execute()
+        )
+        if not result.data:
+            return False
+        expires_at = result.data[0].get("expires_at")
+        if not expires_at:
+            return True
+        expiration = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        if expiration.tzinfo is None:
+            expiration = expiration.replace(tzinfo=timezone.utc)
+        return expiration > datetime.now(timezone.utc)
 
     async def bind_group(self, chat_id: int, group_id: int) -> bool:
         """Bind chat to a group."""
