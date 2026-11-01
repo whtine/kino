@@ -130,7 +130,7 @@ async def welcome_new_chat_member(message: Message):
     )
 
 
-@bp.on.raw_event("message_event", MessageEvent)
+@bp.on.raw_event("message_event", MessageEvent, blocking=False)
 async def activation_button(event: MessageEvent):
     if not isinstance(event.payload, dict) or event.payload.get("cmd") != "activate_chat":
         return
