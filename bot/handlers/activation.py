@@ -4,6 +4,7 @@ import logging
 
 from vkbottle import Keyboard
 from vkbottle.bot import Blueprint, Message, MessageEvent
+from vkbottle.dispatch.rules.base import ChatActionRule
 
 from bot.keyboards import get_activation_keyboard
 from bot.utils.formatters import format_user_mention
@@ -77,7 +78,15 @@ async def start_chat(message: Message):
     await message.answer("Бот уже активирован в этой беседе. Список команд: /help")
 
 
-@bp.on.chat_message()
+@bp.on.chat_message(
+    ChatActionRule(
+        [
+            "chat_invite_user",
+            "chat_invite_user_by_link",
+            "chat_invite_user_by_message_request",
+        ]
+    )
+)
 async def welcome_new_chat_member(message: Message):
     action = getattr(message, "action", None)
     action_type = getattr(action, "type", None)
