@@ -64,6 +64,17 @@ async def activate_chat(message: Message):
     await _activate_in_chat(message)
 
 
+_configured_activation_command = (
+    str(config.activation_command or "/activate")
+    .strip()
+    .lstrip("/")
+    .split("@", 1)[0]
+    .lower()
+)
+if _configured_activation_command and _configured_activation_command != "activate":
+    bp.on.chat_message(command=_configured_activation_command)(_activate_in_chat)
+
+
 @bp.on.chat_message(regex=r"^\*$")
 async def activate_star_handler(message: Message):
     """Activate chat: *"""

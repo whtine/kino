@@ -37,24 +37,59 @@ class VKAPIWrapper:
     async def delete_message(
         self, chat_id: int, conversation_message_ids: List[int], delete_for_all: bool = True
     ) -> bool:
+        if not conversation_message_ids:
+            return False
         try:
             result = await self.api.messages.delete(
                 peer_id=chat_id,
                 cmids=conversation_message_ids,
                 delete_for_all=delete_for_all,
             )
-            return bool(result)
+            if not isinstance(result, list):
+                return bool(result)
+
+            failed = []
+            for requested_cmid, item in zip(conversation_message_ids, result):
+                deleted = (
+                    item.get("response") if isinstance(item, dict)
+                    else getattr(item, "response", None)
+                )
+                if deleted is not True:
+                    error = (
+                        item.get("error") if isinstance(item, dict)
+                        else getattr(item, "error", None)
+                    )
+                    failed.append((requested_cmid, error))
+            if failed or len(result) != len(conversation_message_ids):
+                logger.error(
+                    "VK rejected message deletion in chat %s; failed items: %s",
+                    chat_id,
+                    failed or "response count did not match request",
+                )
+                return False
+            return True
         except Exception:
-            logger.exception("Could not delete messages in chat %s", chat_id)
+            logger.exception(
+                "Could not delete messages %s in chat %s",
+                conversation_message_ids,
+                chat_id,
+            )
             return False
 
-    async def clear_recent_messages(self, chat_id: int, amount: int) -> bool:
+    async def clear_recent_messages(
+        self, chat_id: int, amount: int, exclude_cmid: Optional[int] = None
+    ) -> bool:
         try:
-            history = await self.api.messages.get_history(peer_id=chat_id, count=amount + 1)
+            history = await self.api.messages.get_history(
+                peer_id=chat_id,
+                count=amount + (1 if exclude_cmid else 0),
+            )
+            items = getattr(history, "items", None) or []
             ids = [
                 item.conversation_message_id
-                for item in (getattr(history, "items", None) or [])
+                for item in items
                 if getattr(item, "conversation_message_id", None) is not None
+                and item.conversation_message_id != exclude_cmid
             ][:amount]
             return await self.delete_message(chat_id, ids) if ids else False
         except Exception:
@@ -63,7 +98,10 @@ class VKAPIWrapper:
 
     async def pin_message(self, chat_id: int, conversation_message_id: int) -> bool:
         try:
-            await self.api.messages.pin(peer_id=chat_id, cmid=conversation_message_id)
+            await self.api.messages.pin(
+                peer_id=chat_id,
+                cmid=conversation_message_id,
+            )
             return True
         except Exception:
             logger.exception("Could not pin a message in chat %s", chat_id)
@@ -82,9 +120,8 @@ class VKAPIWrapper:
             result = await self.api.messages.get_conversation_members(
                 peer_id=chat_id,
                 extended=True,
-                fields=["first_name", "last_name", "is_bot"],
             )
-            return list(result.items or [])
+            return list(getattr(result, "items", None) or [])
         except Exception:
             logger.exception("Could not retrieve members of chat %s", chat_id)
             raise
@@ -95,9 +132,8 @@ class VKAPIWrapper:
             result = await self.api.messages.get_conversation_members(
                 peer_id=chat_id,
                 extended=True,
-                fields=["first_name", "last_name", "is_bot"],
             )
-            return list(result.profiles or [])
+            return list(getattr(result, "profiles", None) or [])
         except Exception:
             logger.exception("Could not retrieve profiles of chat %s", chat_id)
             return []
@@ -109,11 +145,8 @@ class VKAPIWrapper:
             logger.exception("Could not retrieve members of chat %s", chat_id)
             return False
         for member in members:
-            member_id = getattr(member, "member_id", None)
-            is_admin = getattr(member, "is_admin", False) or False
-            if isinstance(member, dict):
-                member_id = member.get("member_id", member_id)
-                is_admin = member.get("is_admin", is_admin)
+            member_id = member.get("member_id") if isinstance(member, dict) else member.member_id
+            is_admin = member.get("is_admin") if isinstance(member, dict) else member.is_admin
             if member_id == user_id:
                 return bool(is_admin)
         return False
@@ -121,50 +154,52 @@ class VKAPIWrapper:
     async def get_member_names(self, chat_id: int, user_ids: List[int]) -> Dict[int, str]:
         profiles = await self.get_member_profiles(chat_id)
         names: Dict[int, str] = {}
+        wanted = set(user_ids or [])
         for profile in profiles:
-            profile_id = getattr(profile, "id", None)
-            if isinstance(profile, dict):
-                profile_id = profile.get("id")
-            if profile_id is None or profile_id not in user_ids:
+            profile_id = profile.get("id") if isinstance(profile, dict) else profile.id
+            if profile_id is None or profile_id not in wanted:
                 continue
             first_name = (
-                getattr(profile, "first_name", None)
-                or (profile.get("first_name") if isinstance(profile, dict) else "")
-                or ""
-            )
+                profile.get("first_name") if isinstance(profile, dict) else profile.first_name
+            ) or ""
             last_name = (
-                getattr(profile, "last_name", None)
-                or (profile.get("last_name") if isinstance(profile, dict) else "")
-                or ""
-            )
+                profile.get("last_name") if isinstance(profile, dict) else profile.last_name
+            ) or ""
             names[profile_id] = f"{first_name} {last_name}".strip()
         return names
 
     async def mention_all(self, chat_id: int, max_mentions: int = 100) -> str:
         profiles = await self.get_member_profiles(chat_id)
-        mentions = []
+        names: Dict[int, str] = {}
         for profile in profiles:
-            profile_id = getattr(profile, "id", None)
-            if isinstance(profile, dict):
-                profile_id = profile.get("id")
-            if profile_id is None or profile_id <= 0:
+            profile_id = profile.get("id") if isinstance(profile, dict) else profile.id
+            if profile_id is None:
                 continue
-            if isinstance(profile, dict) and profile.get("is_bot"):
+            first_name = (
+                profile.get("first_name") if isinstance(profile, dict) else profile.first_name
+            ) or ""
+            last_name = (
+                profile.get("last_name") if isinstance(profile, dict) else profile.last_name
+            ) or ""
+            names[profile_id] = f"{first_name} {last_name}".strip()
+
+        members = await self.get_conversation_members(chat_id)
+        mentions: List[str] = []
+        seen = set()
+        for member in members:
+            member_id = member.get("member_id") if isinstance(member, dict) else member.member_id
+            if not member_id or member_id <= 0 or member_id in seen:
                 continue
             if len(mentions) >= max_mentions:
                 break
-            first_name = (
-                getattr(profile, "first_name", None)
-                or (profile.get("first_name") if isinstance(profile, dict) else "")
-                or ""
-            )
-            last_name = (
-                getattr(profile, "last_name", None)
-                or (profile.get("last_name") if isinstance(profile, dict) else "")
-                or ""
-            )
+            name = names.get(member_id)
+            if not name:
+                continue
+            first_name = name.split(" ")[0] if name else ""
+            last_name = name.split(" ")[1] if len(name.split(" ")) > 1 else ""
             suffix = f" {last_name[0]}." if last_name else ""
-            mentions.append(f"[id{profile_id}|{first_name}{suffix}]")
+            mentions.append(f"[id{member_id}|{first_name}{suffix}]")
+            seen.add(member_id)
         return " ".join(mentions)
 
     async def send_message(
@@ -173,7 +208,7 @@ class VKAPIWrapper:
         text: str,
         reply_to: Optional[int] = None,
         keyboard: Optional[str] = None,
-    ) -> Optional[int]:
+    ) -> bool:
         try:
             result = await self.api.messages.send(
                 peer_id=chat_id,
@@ -182,17 +217,18 @@ class VKAPIWrapper:
                 reply_to=reply_to,
                 keyboard=keyboard,
             )
-            return result if isinstance(result, int) else None
+            return True
         except Exception:
             logger.exception("Could not send message to chat %s", chat_id)
-            return None
+            return False
 
     async def get_chat_info(self, chat_id: int) -> Optional[Dict[str, Any]]:
         try:
             result = await self.api.messages.get_conversations_by_id(peer_ids=[chat_id])
-            if not result.items:
+            items = getattr(result, "items", None) or []
+            if not items:
                 return None
-            settings = result.items[0].chat_settings
+            settings = getattr(items[0], "chat_settings", None)
             if not settings:
                 return None
             return {

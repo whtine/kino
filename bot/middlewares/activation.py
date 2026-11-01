@@ -46,12 +46,14 @@ class ActivationMiddleware(BaseMiddleware[Message]):
             self.stop(f"Чат {chat_id} не активирован")
             return
 
-        if message.from_id > 0 and await members_repo.is_muted(chat_id, message.from_id):
-            await self._delete_message(message, chat_id)
-            self.stop(f"Пользователь {message.from_id} замучен")
+        if message.from_id > 0 and not (getattr(message, "text", None) or "").strip().startswith("/"):
+            if await members_repo.is_muted(chat_id, message.from_id):
+                await self._delete_message(message, chat_id)
+                self.stop(f"Пользователь {message.from_id} замучен")
+                return
 
         settings = chat.get("settings") or {}
-        if settings.get("timeout") and not text.startswith("/"):
+        if settings.get("timeout") and not (getattr(message, "text", None) or "").strip().startswith("/"):
             await self._delete_message(message, chat_id)
             self.stop(f"Тихий режим активен в чате {chat_id}")
 

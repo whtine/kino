@@ -3,25 +3,32 @@
 import asyncio
 import logging
 
+from aiohttp import web
+
 from bot.dispatcher import bot
-from bot.health_server import start_health_server
 from config import config
 
 logging.basicConfig(level=logging.INFO)
 
 
+async def healthz(request: web.Request) -> web.Response:
+    """Health check endpoint for Render."""
+    return web.Response(text="OK")
+
+
 async def main() -> None:
-    """Run VK Long Poll alongside the HTTP health endpoint."""
-    server = await start_health_server(config.port)
-    addresses = ", ".join(str(sock.getsockname()) for sock in server.sockets or [])
-    logging.info("Health server listening on %s", addresses)
+    """Run VK bot via Long Poll with a lightweight health server."""
     logging.info("VK bot starting")
-    try:
-        async with server:
-            await bot.run_polling()
-    finally:
-        server.close()
-        await server.wait_closed()
+    app = web.Application()
+    app.router.add_get("/healthz", healthz)
+    app.router.add_get("/", healthz)
+    app.router.add_get("/ping", healthz)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", config.port)
+    await site.start()
+    logging.info("Health server started on port %s", config.port)
+    await bot.run_polling()
 
 
 if __name__ == "__main__":

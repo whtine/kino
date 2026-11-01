@@ -12,8 +12,10 @@ class GroupsRepository:
         result = sb.table(self.table).insert({
             "name": name,
             "owner_id": owner_id
-        }).execute()
-        return result.data[0] if result.data else None
+        }).select("*").execute()
+        if not result.data:
+            raise RuntimeError("Could not create chat group")
+        return result.data[0]
 
     async def get(self, group_id: int) -> Optional[Dict[str, Any]]:
         """Get group by ID."""
@@ -27,17 +29,17 @@ class GroupsRepository:
         result = sb.table(self.table).select("*").eq("owner_id", owner_id).execute()
         return result.data or []
 
-    async def update(self, group_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def update(self, group_id: int, data: Dict[str, Any]) -> bool:
         """Update group."""
         sb = get_supabase()
-        result = sb.table(self.table).update(data).eq("id", group_id).execute()
-        return result.data[0] if result.data else None
+        result = sb.table(self.table).update(data).eq("id", group_id).select("id").execute()
+        return bool(result.data)
 
     async def delete(self, group_id: int) -> bool:
         """Delete group (cascades to bindings, global_bans, global_nicknames)."""
         sb = get_supabase()
-        result = sb.table(self.table).delete().eq("id", group_id).execute()
-        return len(result.data or []) > 0
+        result = sb.table(self.table).delete().eq("id", group_id).select("id").execute()
+        return bool(result.data)
 
     async def get_bound_chats(self, group_id: int) -> List[int]:
         """Get chat_ids bound to this group."""
@@ -51,11 +53,14 @@ class GroupsRepository:
         result = sb.table("chat_group_bindings").upsert({
             "chat_id": chat_id,
             "group_id": group_id
-        }).execute()
-        return len(result.data or []) > 0
+        }).select("chat_id").execute()
+        return bool(result.data)
 
     async def unbind_chat(self, chat_id: int, group_id: int) -> bool:
         """Unbind chat from group."""
         sb = get_supabase()
-        result = sb.table("chat_group_bindings").delete().eq("chat_id", chat_id).eq("group_id", group_id).execute()
-        return len(result.data or []) > 0
+        result = (
+            sb.table("chat_group_bindings").delete().eq("chat_id", chat_id)
+            .eq("group_id", group_id).select("chat_id").execute()
+        )
+        return bool(result.data)

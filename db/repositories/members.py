@@ -25,23 +25,28 @@ class MembersRepository:
     async def create(self, chat_id: int, user_id: int, role: int = 0) -> Dict[str, Any]:
         """Create new member record."""
         sb = get_supabase()
-        data = {"chat_id": chat_id, "user_id": user_id, "role": role}
-        result = sb.table(self.table).insert(data).execute()
-        return result.data[0] if result.data else None
+        sb.table(self.table).insert({
+            "chat_id": chat_id,
+            "user_id": user_id,
+            "role": role,
+        }).execute()
+        return await self.get(chat_id, user_id)
 
-    async def update(self, chat_id: int, user_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def update(self, chat_id: int, user_id: int, data: Dict[str, Any]) -> bool:
         """Update member fields."""
         sb = get_supabase()
-        result = sb.table(self.table).update(data).eq("chat_id", chat_id).eq("user_id", user_id).execute()
-        return result.data[0] if result.data else None
+        result = (
+            sb.table(self.table).update(data).eq("chat_id", chat_id)
+            .eq("user_id", user_id).select("user_id").execute()
+        )
+        return bool(result.data)
 
     async def set_role(self, chat_id: int, user_id: int, role: int) -> bool:
         """Set member role (0-6)."""
         if not 0 <= role <= 6:
             raise ValueError("Role must be between 0 and 6")
         await self.get_or_create(chat_id, user_id)
-        result = await self.update(chat_id, user_id, {"role": role})
-        return result is not None
+        return await self.update(chat_id, user_id, {"role": role})
 
     async def get_role(self, chat_id: int, user_id: int) -> int:
         """Get member role, default 0."""
@@ -51,8 +56,7 @@ class MembersRepository:
     async def set_nickname(self, chat_id: int, user_id: int, nickname: Optional[str]) -> bool:
         """Set or remove local nickname."""
         await self.get_or_create(chat_id, user_id)
-        result = await self.update(chat_id, user_id, {"nickname": nickname})
-        return result is not None
+        return await self.update(chat_id, user_id, {"nickname": nickname})
 
     async def get_nickname(self, chat_id: int, user_id: int) -> Optional[str]:
         """Get local nickname."""
@@ -77,8 +81,7 @@ class MembersRepository:
 
     async def set_warns(self, chat_id: int, user_id: int, count: int) -> bool:
         """Set warns count directly."""
-        result = await self.update(chat_id, user_id, {"warns": max(0, count)})
-        return result is not None
+        return await self.update(chat_id, user_id, {"warns": max(0, count)})
 
     async def set_mute(self, chat_id: int, user_id: int, is_muted: bool, muted_until: Optional[str] = None) -> bool:
         """Set mute status with optional expiration."""
@@ -88,8 +91,7 @@ class MembersRepository:
             data["muted_until"] = muted_until
         else:
             data["muted_until"] = None
-        result = await self.update(chat_id, user_id, data)
-        return result is not None
+        return await self.update(chat_id, user_id, data)
 
     async def is_muted(self, chat_id: int, user_id: int) -> bool:
         """Check if user is currently muted."""

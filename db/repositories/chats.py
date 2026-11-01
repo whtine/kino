@@ -25,20 +25,21 @@ class ChatsRepository:
     async def create(self, chat_id: int, title: str = None) -> Dict[str, Any]:
         """Create new chat record."""
         sb = get_supabase()
-        data = {"chat_id": chat_id, "title": title or f"Chat {chat_id}"}
-        result = sb.table(self.table).upsert(data, on_conflict="chat_id").execute()
-        return result.data[0] if result.data else None
+        sb.table(self.table).upsert(data := {"chat_id": chat_id, "title": title or f"Chat {chat_id}"}, on_conflict="chat_id").execute()
+        return await self.get(chat_id)
 
-    async def update(self, chat_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def update(self, chat_id: int, data: Dict[str, Any]) -> bool:
         """Update chat fields."""
         sb = get_supabase()
-        result = sb.table(self.table).update(data).eq("chat_id", chat_id).execute()
-        return result.data[0] if result.data else None
+        result = (
+            sb.table(self.table).update(data).eq("chat_id", chat_id)
+            .select("chat_id").execute()
+        )
+        return bool(result.data)
 
     async def set_active(self, chat_id: int, is_active: bool) -> bool:
         """Activate/deactivate chat."""
-        result = await self.update(chat_id, {"is_active": is_active})
-        return result is not None
+        return await self.update(chat_id, {"is_active": is_active})
 
     async def update_settings(self, chat_id: int, settings: Dict[str, Any]) -> bool:
         """Update chat settings (merged with existing)."""
@@ -47,8 +48,7 @@ class ChatsRepository:
             return False
         current = dict(chat.get("settings") or {})
         current.update(settings)
-        result = await self.update(chat_id, {"settings": current})
-        return result is not None
+        return await self.update(chat_id, {"settings": current})
 
     async def get_active_chats(self) -> List[Dict[str, Any]]:
         """Get all active chats."""
@@ -63,15 +63,17 @@ class ChatsRepository:
         binding = sb.table("chat_group_bindings").upsert({
             "chat_id": chat_id,
             "group_id": group_id
-        }).execute()
+        }).select("chat_id").execute()
         # Update chat's group_id
-        result = await self.update(chat_id, {"group_id": group_id})
-        return bool(result and binding.data)
+        updated = await self.update(chat_id, {"group_id": group_id})
+        return bool(binding.data) and updated
 
     async def unbind_group(self, chat_id: int) -> bool:
         """Unbind chat from group."""
         sb = get_supabase()
-        result = await self.update(chat_id, {"group_id": None})
-        if result:
-            sb.table("chat_group_bindings").delete().eq("chat_id", chat_id).execute()
-        return result is not None
+        updated = await self.update(chat_id, {"group_id": None})
+        deleted = (
+            sb.table("chat_group_bindings").delete().eq("chat_id", chat_id)
+            .select("chat_id").execute()
+        )
+        return updated and bool(deleted.data)

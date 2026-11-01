@@ -38,7 +38,7 @@ pip install -r requirements.txt
 
 Open a new terminal after setting these values, then run `python main.py`. The app reads configuration directly from OS environment variables with `os.getenv`; it does not load `.env` files. `.env.example` is only a list of variable names and placeholders.
 
-Use the Supabase server-side secret/service-role key for `SUPABASE_KEY`. A `sb_publishable_...` key is intended for client-side use and is not suitable for this bot's database access; the app rejects that key format at startup. Never put a real secret in source code or commit it. For Render, set the same values in the service's Environment settings.
+Use the Supabase server-side secret key (`sb_secret_...`) or legacy `service_role` JWT for `SUPABASE_KEY`. The Supabase Python SDK is pinned to a version that supports both key formats. A `sb_publishable_...` key is intended for client-side use and is not suitable for this bot's database access; the app rejects that key format at startup. Never put a real secret in source code or commit it. For Render, set the same values in the service's Environment settings.
 
 `GROUP_ID` is the VK community ID used by Long Poll, not a chat ID. No chat ID is configured in an environment variable; the bot can be activated independently in every conversation it joins.
 
@@ -70,3 +70,4 @@ python main.py
 See `bot/utils/permissions.py` (`COMMAND_PERMISSIONS`) for the full command → role mapping.
 Mute durations use `с`, `м`, `ч`, or `д` (for example, `/mute 123 30м флуд`).
 `/rep` allows one vote for each other user per chat. `/async timeout on|off` applies silence mode to active chats in the bound group.
+`/help` displays commands with descriptions; inline role buttons show only commands available at the selected level and below.

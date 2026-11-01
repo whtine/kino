@@ -11,7 +11,7 @@ class PunishmentsRepository:
         self.table = "punishments"
 
     async def add(self, chat_id: int, target_id: int, moderator_id: int, 
-                  type: str, reason: str = None, duration: Optional[timedelta] = None) -> Dict[str, Any]:
+                  type: str, reason: str = None, duration: Optional[timedelta] = None) -> Optional[Dict[str, Any]]:
         """Add punishment record."""
         sb = get_supabase()
         data = {
@@ -23,7 +23,7 @@ class PunishmentsRepository:
         }
         if duration:
             data["duration"] = str(duration)
-        result = sb.table(self.table).insert(data).execute()
+        result = sb.table(self.table).insert(data).select("*").execute()
         return result.data[0] if result.data else None
 
     async def get_history(self, chat_id: int, target_id: int, limit: int = 50) -> List[Dict[str, Any]]:

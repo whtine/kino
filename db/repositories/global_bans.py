@@ -8,7 +8,9 @@ class GlobalBansRepository:
         self.nicks_table = "global_nicknames"
 
     # Global Bans
-    async def ban(self, group_id: int, user_id: int, reason: str, banned_by: int) -> Dict[str, Any]:
+    async def ban(
+        self, group_id: int, user_id: int, reason: str, banned_by: int
+    ) -> Optional[Dict[str, Any]]:
         """Add global ban."""
         sb = get_supabase()
         result = sb.table(self.bans_table).upsert({
@@ -16,14 +18,17 @@ class GlobalBansRepository:
             "user_id": user_id,
             "reason": reason,
             "banned_by": banned_by
-        }).execute()
+        }).select("user_id").execute()
         return result.data[0] if result.data else None
 
     async def unban(self, group_id: int, user_id: int) -> bool:
         """Remove global ban."""
         sb = get_supabase()
-        result = sb.table(self.bans_table).delete().eq("group_id", group_id).eq("user_id", user_id).execute()
-        return len(result.data or []) > 0
+        result = (
+            sb.table(self.bans_table).delete().eq("group_id", group_id)
+            .eq("user_id", user_id).select("user_id").execute()
+        )
+        return bool(result.data)
 
     async def is_banned(self, group_id: int, user_id: int) -> Optional[Dict[str, Any]]:
         """Check if user is globally banned in group."""
@@ -38,7 +43,9 @@ class GlobalBansRepository:
         return result.data or []
 
     # Global Nicknames
-    async def set_nickname(self, group_id: int, user_id: int, nickname: str, set_by: int) -> Dict[str, Any]:
+    async def set_nickname(
+        self, group_id: int, user_id: int, nickname: str, set_by: int
+    ) -> Optional[Dict[str, Any]]:
         """Set global nickname."""
         sb = get_supabase()
         result = sb.table(self.nicks_table).upsert({
@@ -46,14 +53,17 @@ class GlobalBansRepository:
             "user_id": user_id,
             "nickname": nickname,
             "set_by": set_by
-        }).execute()
+        }).select("user_id").execute()
         return result.data[0] if result.data else None
 
     async def remove_nickname(self, group_id: int, user_id: int) -> bool:
         """Remove global nickname."""
         sb = get_supabase()
-        result = sb.table(self.nicks_table).delete().eq("group_id", group_id).eq("user_id", user_id).execute()
-        return len(result.data or []) > 0
+        result = (
+            sb.table(self.nicks_table).delete().eq("group_id", group_id)
+            .eq("user_id", user_id).select("user_id").execute()
+        )
+        return bool(result.data)
 
     async def get_nickname(self, group_id: int, user_id: int) -> Optional[str]:
         """Get global nickname."""

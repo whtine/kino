@@ -1,5 +1,8 @@
+import json
 import logging
 import re
+import time
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -7,6 +10,7 @@ from vkbottle.bot import Blueprint, Message
 
 from bot.utils.formatters import (
     format_duration,
+    format_help_level_text,
     format_help_text,
     format_punishment,
     format_stats_entry,
@@ -14,6 +18,7 @@ from bot.utils.formatters import (
     format_user_mention,
 )
 from bot.utils.permissions import get_role_name
+from bot.keyboards import get_help_keyboard
 from bot.utils.vk_api import vk_api
 from config import config
 from db.repositories.chats import ChatsRepository
@@ -34,12 +39,53 @@ groups = GroupsRepository()
 global_data = GlobalBansRepository()
 
 TARGET_PATTERN = re.compile(r"(?:\[id|@id)(\d+)(?:\||\])?")
+_SEEN_MESSAGE_TTL_SECONDS = 120
+_MAX_SEEN_MESSAGES = 4096
+_seen_messages: OrderedDict[tuple[int, int], float] = OrderedDict()
 
 
 def _parts(text: str) -> tuple[str, list[str]]:
     pieces = text.strip().split()
     command = pieces[0].split("@", 1)[0][1:].lower()
     return command, pieces[1:]
+
+
+def _help_level_from_payload(message: Message) -> Optional[int]:
+    payload = getattr(message, "payload", None)
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(payload, dict) or payload.get("cmd") != "help_level":
+        return None
+    level = payload.get("level")
+    if isinstance(level, bool) or not isinstance(level, int) or not 0 <= level <= 6:
+        return None
+    return level
+
+
+def _is_duplicate_message(message: Message) -> bool:
+    message_id = getattr(message, "conversation_message_id", 0)
+    peer_id = getattr(message, "peer_id", 0)
+    if not message_id or not peer_id:
+        return False
+
+    now = time.monotonic()
+    while _seen_messages:
+        _, seen_at = next(iter(_seen_messages.items()))
+        if now - seen_at <= _SEEN_MESSAGE_TTL_SECONDS:
+            break
+        _seen_messages.popitem(last=False)
+
+    key = (peer_id, message_id)
+    if key in _seen_messages:
+        return True
+
+    _seen_messages[key] = now
+    if len(_seen_messages) > _MAX_SEEN_MESSAGES:
+        _seen_messages.popitem(last=False)
+    return False
 
 
 def _target_from_args(message: Message, args: list[str]) -> tuple[Optional[int], list[str]]:
@@ -101,20 +147,46 @@ async def _add_log(
     reason: Optional[str] = None,
     duration: Optional[timedelta] = None,
 ) -> None:
-    await punishments.add(chat_id, target_id, moderator_id, kind, reason, duration)
+    if not await punishments.add(chat_id, target_id, moderator_id, kind, reason, duration):
+        raise RuntimeError(f"Не удалось сохранить запись действия {kind}.")
 
 
-@bp.on.message()
+@bp.on.chat_message()
 async def command_router(message: Message):
     text = (message.text or "").strip()
-    if not text.startswith("/") or not text.split():
+    help_level = _help_level_from_payload(message)
+    if help_level is not None:
+        command, args = "help", [str(help_level)]
+    elif text.startswith("/") and text.split():
+        command, args = _parts(text)
+    else:
         return
-
-    command, args = _parts(text)
+    activation_command = str(config.activation_command or "/activate").strip()
+    activation_command = activation_command.lstrip("/").split("@", 1)[0].lower()
+    if command in {"activate", "deactivate", activation_command}:
+        return
+    if _is_duplicate_message(message):
+        logger.debug(
+            "Ignoring duplicate command event %s in chat %s",
+            message.conversation_message_id,
+            message.peer_id,
+        )
+        return
     try:
         chat_id, user_id = await _ensure_chat(message)
         if command in {"help", "start"}:
-            await message.answer(format_help_text(await members.get_role(chat_id, user_id)))
+            user_role = await members.get_role(chat_id, user_id)
+            selected_level = (
+                int(args[0])
+                if args and args[0].isdigit()
+                else user_role
+            )
+            text = (
+                format_help_level_text(user_role, selected_level)
+                if args and args[0].isdigit()
+                else format_help_text(user_role)
+            )
+            await message.answer(text, keyboard=get_help_keyboard(user_role))
             return
         if command in {"id", "stats"}:
             target_id, _ = _target_from_args(message, args)
@@ -164,15 +236,20 @@ async def command_router(message: Message):
                     await message.answer("Вы уже голосовали за этого пользователя.")
                     return
                 raise
-            count = sb.table("chat_reputation").select("target_id", count="exact").eq(
+            votes = sb.table("chat_reputation").select("voter_id").eq(
                 "chat_id", chat_id
-            ).eq("target_id", target_id).execute().count
-            await message.answer(f"⭐ Репутация {format_user_mention(target_id)}: {count or 0}")
+            ).eq("target_id", target_id).execute()
+            count = len(votes.data or [])
+            await message.answer(f"⭐ Репутация {format_user_mention(target_id)}: {count}")
             return
         if command in {"staff", "olist"}:
             staff = await members.get_staff(chat_id)
             if command == "olist" and vk_api:
-                present = {profile.id for profile in await vk_api.get_conversation_members(chat_id)}
+                members_list = await vk_api.get_conversation_members(chat_id)
+                present = {
+                    member.get("member_id") if isinstance(member, dict) else member.member_id
+                    for member in members_list
+                }
                 staff = [row for row in staff if row["user_id"] in present]
             if not staff:
                 await message.answer("👮 Администрация не найдена.")
@@ -229,12 +306,14 @@ async def command_router(message: Message):
             reason = " ".join(rest) or None
             if command == "ban":
                 from db.supabase import get_supabase
-                get_supabase().table("chat_bans").upsert({
+                result = get_supabase().table("chat_bans").upsert({
                     "chat_id": chat_id,
                     "user_id": target_id,
                     "reason": reason,
                     "banned_by": user_id,
-                }).execute()
+                }).select("user_id").execute()
+                if not result.data:
+                    raise RuntimeError("Не удалось сохранить локальную блокировку.")
             kicked = bool(vk_api and await vk_api.kick_user(chat_id, target_id))
             if not kicked and command != "ban":
                 await message.answer("❌ Не удалось исключить пользователя. Проверьте права бота.")
@@ -257,11 +336,19 @@ async def command_router(message: Message):
             if not await _can_moderate(message, chat_id, user_id, target_id):
                 return
             from db.supabase import get_supabase
-            removed = get_supabase().table("chat_bans").delete().eq(
+            sb = get_supabase()
+            existing_ban = sb.table("chat_bans").select("user_id").eq(
                 "chat_id", chat_id
-            ).eq("user_id", target_id).execute()
-            if not removed.data:
+            ).eq("user_id", target_id).limit(1).execute()
+            if not existing_ban.data:
                 await message.answer("Пользователь не найден в списке блокировок этой беседы.")
+                return
+            deleted = (
+                sb.table("chat_bans").delete().eq("chat_id", chat_id)
+                .eq("user_id", target_id).select("user_id").execute()
+            )
+            if not deleted.data:
+                await message.answer("Блокировка уже была снята.")
                 return
             await _add_log(chat_id, target_id, user_id, "unban")
             if not vk_api or not await vk_api.add_chat_user(chat_id, target_id):
@@ -314,9 +401,12 @@ async def command_router(message: Message):
             if not 1 <= amount <= 100:
                 await message.answer("Количество сообщений должно быть от 1 до 100.")
                 return
-            if not vk_api or not await vk_api.clear_recent_messages(chat_id, amount):
+            if not vk_api or not await vk_api.clear_recent_messages(
+                chat_id, amount, message.conversation_message_id
+            ):
                 await message.answer("❌ Не удалось удалить сообщения. Проверьте права бота.")
                 return
+            await message.answer("✅ Сообщения удалены.")
             return
         if command in {"warnlist", "mutelist", "logs"}:
             if command == "warnlist":
@@ -356,13 +446,29 @@ async def command_router(message: Message):
                 await message.answer("Использование: /snick [id] ник (или ответьте на сообщение)")
                 return
             target_id = target_id or user_id
+            previous_nickname = await members.get_nickname(chat_id, target_id)
             if command == "snick":
-                if not await members.set_nickname(chat_id, target_id, nickname[:64]):
+                new_nickname = nickname[:64]
+                if not await members.set_nickname(chat_id, target_id, new_nickname):
                     raise RuntimeError("Не удалось сохранить никнейм.")
-                await message.answer(f"🏷 Ник пользователя изменён на «{nickname[:64]}».")
+                await _add_log(
+                    chat_id,
+                    target_id,
+                    user_id,
+                    "nickname_set",
+                    f"Локальный ник: {previous_nickname or 'не установлен'} → {new_nickname}",
+                )
+                await message.answer(f"🏷 Ник пользователя изменён на «{new_nickname}».")
             else:
                 if not await members.set_nickname(chat_id, target_id, None):
                     raise RuntimeError("Не удалось удалить никнейм.")
+                await _add_log(
+                    chat_id,
+                    target_id,
+                    user_id,
+                    "nickname_removed",
+                    f"Удалён локальный ник: {previous_nickname or 'не установлен'}",
+                )
                 await message.answer("✅ Никнейм удалён.")
             return
         if command == "getnick":
@@ -395,15 +501,32 @@ async def command_router(message: Message):
                 await message.answer(f"Использование: /{command} [id] ник; нужна привязанная группа.")
                 return
             if command == "gsnick":
+                previous_nickname = await global_data.get_nickname(group_id, target_id)
+                new_nickname = " ".join(rest)[:64]
                 if not await global_data.set_nickname(
-                    group_id, target_id, " ".join(rest)[:64], user_id
+                    group_id, target_id, new_nickname, user_id
                 ):
                     raise RuntimeError("Не удалось сохранить глобальный никнейм.")
+                await _add_log(
+                    chat_id,
+                    target_id,
+                    user_id,
+                    "global_nickname_set",
+                    f"Группа {group_id}: {previous_nickname or 'не установлен'} → {new_nickname}",
+                )
                 await message.answer("✅ Глобальный ник установлен.")
             else:
+                previous_nickname = await global_data.get_nickname(group_id, target_id)
                 if not await global_data.remove_nickname(group_id, target_id):
                     await message.answer("Глобальный никнейм не найден.")
                     return
+                await _add_log(
+                    chat_id,
+                    target_id,
+                    user_id,
+                    "global_nickname_removed",
+                    f"Группа {group_id}: удалён ник {previous_nickname or 'не установлен'}",
+                )
                 await message.answer("✅ Глобальный ник удалён.")
             return
         if command == "mygroups":
@@ -498,6 +621,13 @@ async def command_router(message: Message):
                 return
             if not await groups.update(group_id, {"owner_id": target_id}):
                 raise RuntimeError("Не удалось передать права владельца.")
+            await _add_log(
+                chat_id,
+                target_id,
+                user_id,
+                "group_owner_change",
+                f"Группа {group_id}: владелец {user_id} → {target_id}",
+            )
             await message.answer(f"✅ Владелец группы передан {format_user_mention(target_id)}.")
             return
         if command == "gban":
@@ -553,7 +683,7 @@ async def command_router(message: Message):
                 if not mentions:
                     failures += 1
                     continue
-                if await vk_api.send_message(bound_chat, f"📢 Внимание!\n{mentions}") is None:
+                if not await vk_api.send_message(bound_chat, f"📢 Внимание!\n{mentions}"):
                     failures += 1
                 else:
                     sent += 1
@@ -568,10 +698,14 @@ async def command_router(message: Message):
                 return
             if not await vk_api.pin_message(chat_id, target_message.conversation_message_id):
                 await message.answer("❌ Не удалось закрепить сообщение.")
+            else:
+                await message.answer("📌 Сообщение закреплено.")
             return
         if command == "unpin":
             if not vk_api or not await vk_api.unpin_message(chat_id):
                 await message.answer("❌ Не удалось открепить сообщение.")
+            else:
+                await message.answer("✅ Сообщение откреплено.")
             return
         if command == "antitag":
             current = await chats.get(chat_id)
@@ -673,6 +807,7 @@ async def command_router(message: Message):
                 f"Не удалось исключить участника из бесед: {kick_failures}."
             )
             return
+        await message.answer(f"Неизвестная команда /{command}. Список команд: /help")
     except ValueError as exc:
         await message.answer(f"❌ {exc}")
     except Exception:
@@ -692,6 +827,14 @@ async def _assign_role(message: Message, args: list[str], role: int, actor_id: i
         return
     if not await members.set_role(chat_id, target_id, role):
         raise RuntimeError("Не удалось сохранить роль пользователя.")
+    await _add_log(
+        chat_id,
+        target_id,
+        actor_id,
+        "role_change",
+        f"Роль: {get_role_name(target_role)} ({target_role}) → "
+        f"{get_role_name(role)} ({role})",
+    )
     await message.answer(
         f"✅ Роль {format_user_mention(target_id)} изменена на "
         f"{get_role_name(role)} ({role})."

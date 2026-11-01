@@ -37,5 +37,5 @@ def get_command(message: Any) -> Optional[str]:
     if not text or not text.startswith("/"):
         return None
     parts = text.split()
-    command = parts[0].lstrip("/").lower()
+    command = parts[0].split("@", 1)[0].lstrip("/").lower()
     return command or None
