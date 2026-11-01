@@ -185,8 +185,8 @@ async def _revoke_role_after_removal(
         target_id,
         actor_id,
         "role_change",
-        f"Роль: {get_role_name(previous_role)} ({previous_role}) → "
-        f"{get_role_name(0)} (0). {reason}",
+        f"{reason} Роль: {get_role_name(previous_role)} ({previous_role}) → "
+        f"{get_role_name(0)} (0)",
     )
 
 
@@ -844,7 +844,49 @@ async def command_router(message: Message):
                 )
                 return
 
-            amount = int(args[0]) if args and args[0].isdigit() else 1
+            if args and args[0].isdigit():
+                target_cmid = int(args[0])
+                target_message = (
+                    await vk_api.get_message_by_cmid(chat_id, target_cmid)
+                    if vk_api
+                    else None
+                )
+                if not target_message:
+                    await message.answer("Сообщение с таким ID не найдено.")
+                    return
+                target_id = int(getattr(target_message, "from_id", 0) or 0)
+                if target_id == 0:
+                    await message.answer("Не удалось определить автора сообщения.")
+                    return
+                actor_role = await members.get_role(chat_id, user_id)
+                if target_id > 0 and await members.get_role(chat_id, target_id) > actor_role:
+                    await message.answer(
+                        "⛔ Нельзя удалять сообщения пользователей с более высокой ролью."
+                    )
+                    return
+                if target_id < 0 and target_id != -config.group_id:
+                    await message.answer(
+                        "⛔ Нельзя определить роль автора этого сообщения."
+                    )
+                    return
+                if not vk_api or not await vk_api.delete_message(chat_id, [target_cmid]):
+                    await message.answer("❌ Не удалось удалить указанное сообщение.")
+                    return
+                response = await message.answer(
+                    f"✅ Сообщение пользователя {format_user_mention(target_id)} удалено."
+                )
+                _schedule_clear_message_cleanup(
+                    chat_id, message.conversation_message_id, response
+                )
+                return
+
+            amount = (
+                int(args[1])
+                if len(args) > 1
+                and args[0].lower() in {"last", "последние"}
+                and args[1].isdigit()
+                else 1
+            )
             if not 1 <= amount <= 100:
                 await message.answer("Количество сообщений должно быть от 1 до 100.")
                 return
@@ -1309,7 +1351,14 @@ async def command_router(message: Message):
                 await message.answer("📌 Сообщение закреплено.")
             return
         if command == "unpin":
-            if not vk_api or not await vk_api.unpin_message(chat_id):
+            target_cmid = None
+            if message.reply_message:
+                target_cmid = getattr(
+                    message.reply_message, "conversation_message_id", None
+                )
+            elif args and args[0].isdigit():
+                target_cmid = int(args[0])
+            if not vk_api or not await vk_api.unpin_message(chat_id, target_cmid):
                 await message.answer("❌ Не удалось открепить сообщение.")
             else:
                 await message.answer("✅ Сообщение откреплено.")
@@ -1425,8 +1474,21 @@ async def command_router(message: Message):
                     for bound_chat in bound_chats:
                         if not await vk_api.kick_user(bound_chat, target_id):
                             kick_failures += 1
+                        await _revoke_role_after_removal(
+                            bound_chat,
+                            target_id,
+                            user_id,
+                            "Снята при глобальной блокировке.",
+                        )
                 else:
                     kick_failures += len(bound_chats)
+                    for bound_chat in bound_chats:
+                        await _revoke_role_after_removal(
+                            bound_chat,
+                            target_id,
+                            user_id,
+                            "Снята при глобальной блокировке.",
+                        )
             await message.answer(
                 f"✅ Импортировано блокировок: {len(target_ids)}. "
                 f"Не удалось исключить участника из бесед: {kick_failures}."

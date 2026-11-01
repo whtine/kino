@@ -198,8 +198,25 @@ class VKAPIWrapper:
             logger.exception("Could not pin a message in chat %s", chat_id)
             return False
 
-    async def unpin_message(self, chat_id: int) -> bool:
+    async def unpin_message(
+        self, chat_id: int, conversation_message_id: Optional[int] = None
+    ) -> bool:
         try:
+            if conversation_message_id is not None:
+                result = await self.api.messages.get_conversations_by_id(
+                    peer_ids=[chat_id]
+                )
+                items = getattr(result, "items", None) or []
+                settings = (
+                    getattr(items[0], "chat_settings", None) if items else None
+                )
+                pinned = getattr(settings, "pinned_message", None)
+                if (
+                    not pinned
+                    or getattr(pinned, "conversation_message_id", None)
+                    != conversation_message_id
+                ):
+                    return False
             await self.api.messages.unpin(peer_id=chat_id)
             return True
         except Exception:
