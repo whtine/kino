@@ -19,7 +19,7 @@ from bot.utils.formatters import (
     format_user_info,
     format_user_mention,
 )
-from bot.utils.permissions import get_required_role, get_role_name
+from bot.utils.permissions import MAX_HELP_ROLE, get_required_role, get_role_name
 from bot.keyboards import (
     get_help_keyboard,
     get_nick_list_keyboard,
@@ -302,9 +302,9 @@ async def command_router(message: Message):
         if command in {"help", "start"}:
             user_role = await members.get_role(chat_id, user_id)
             selected_level = (
-                int(args[0])
+                min(MAX_HELP_ROLE, int(args[0]))
                 if args and args[0].isdigit()
-                else user_role
+                else min(MAX_HELP_ROLE, user_role)
             )
             text = format_help_level_text(user_role, selected_level)
             await message.answer(
@@ -1577,12 +1577,16 @@ async def help_level_callback(event: MessageEvent):
         return
 
     level = payload.get("level")
-    if isinstance(level, bool) or not isinstance(level, int) or not 0 <= level <= 6:
+    if (
+        isinstance(level, bool)
+        or not isinstance(level, int)
+        or not 0 <= level <= MAX_HELP_ROLE
+    ):
         await event.show_snackbar("Не удалось выбрать уровень команд.")
         return
     try:
         user_role = await members.get_role(event.peer_id, event.user_id)
-        if event.peer_id < 2_000_000_000 or level > user_role:
+        if event.peer_id < 2_000_000_000 or level > min(user_role, MAX_HELP_ROLE):
             await event.show_snackbar("Этот уровень вам недоступен.")
             return
         await event.edit_message(

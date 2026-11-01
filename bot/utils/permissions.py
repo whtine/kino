@@ -15,42 +15,33 @@ COMMAND_PERMISSIONS = {
     "id": 0,
     "stats": 0,
     "top": 0,
-    "chatid": 0,
     "info": 0,
     "rep": 0,
     "help": 0,
-    "start": 0,
     
     # Level 1 - Модератор фильмов
     "kick": 1,
     "mute": 1,
     "warn": 1,
+    "unwarn": 1,
     "clear": 1,
-    "del": 1,
     "staff": 1,
-    "olist": 1,
     "getnick": 1,
     "snick": 1,
     "rnick": 1,
-    "nlist": 1,
-    "check": 1,
-    "gnick": 1,
     "getwarn": 1,
     
     # Level 2 - Администратор
     "unmute": 2,
-    "unwarn": 2,
     "mutelist": 2,
     "warnlist": 2,
     "addmoder": 2,
     "delmoder": 2,
-    "addmlmoder": 2,
-    "delmlmoder": 2,
+    "ban": 2,
+    "unban": 2,
+    "timeout": 2,
     
     # Level 3 - Заместитель главы отдела
-    "ban": 3,
-    "unban": 3,
-    "timeout": 3,
     "zov": 3,
     "addadmin": 3,
     "deladmin": 3,
@@ -62,7 +53,6 @@ COMMAND_PERMISSIONS = {
     "skick": 3,
     "pin": 3,
     "unpin": 3,
-    "logs": 3,
     
     # Level 4 - Глава отдела кинопоказов
     "addzam": 4,
@@ -78,23 +68,46 @@ COMMAND_PERMISSIONS = {
     "bindlist": 4,
     "giveowner": 4,
     "settings": 4,
-    "async": 4,
-    "import": 4,
-
-    # Legacy aliases retained for existing installations.
-    "gban": 4,
-    "gunban": 4,
-    "gsnick": 4,
-    "grnick": 4,
-    "gzov": 4,
-    "addstmoder": 4,
-    
-    # Level 5 - Старший администратор
-    "chat": 5,
-    "antitag": 5,
-    # Level 6 - Спец. права
+    # Legacy commands stay restricted to special rights and are omitted from /help.
+    "del": 6,
+    "olist": 6,
+    "nlist": 6,
+    "check": 6,
+    "gnick": 6,
+    "addmlmoder": 6,
+    "delmlmoder": 6,
+    "logs": 6,
+    "gban": 6,
+    "gunban": 6,
+    "gsnick": 6,
+    "grnick": 6,
+    "gzov": 6,
+    "addstmoder": 6,
+    "chat": 6,
+    "antitag": 6,
+    "async": 6,
+    "import": 6,
     "deactivate": 6,
 }
+
+# /help lists only the new commands introduced at each staff level.
+HELP_COMMANDS_BY_ROLE = {
+    0: ("help", "id", "info", "rep", "stats", "top"),
+    1: (
+        "clear", "getnick", "getwarn", "kick", "mute", "rnick",
+        "snick", "staff", "warn", "unwarn",
+    ),
+    2: ("addmoder", "delmoder", "mutelist", "warnlist", "ban", "unban", "timeout"),
+    3: (
+        "addadmin", "deladmin", "sban", "srnick", "ssnick", "sunban",
+        "szov", "zov", "skick", "pin", "unpin",
+    ),
+    4: (
+        "addzam", "delzam", "otdel", "bind", "unbind", "bindlist",
+        "delotdel", "giveowner", "myotdel", "settings",
+    ),
+}
+MAX_HELP_ROLE = max(HELP_COMMANDS_BY_ROLE)
 
 COMMAND_DESCRIPTIONS = {
     "id": "Показать профиль, роль и статистику участника.",
@@ -107,8 +120,8 @@ COMMAND_DESCRIPTIONS = {
     "start": "Показать команды и выбрать уровень доступа.",
     "kick": "Исключить пользователя из беседы.",
     "mute": "Выдать мут на 15–450 минут: /mute @username 30 минут причина.",
-    "warn": "Выдать от 1 до 3 выговоров сотруднику.",
-    "clear": "Удалить сообщение по ответу или ID; /clear последние N удаляет недавние.",
+    "warn": "Выдать предупреждение пользователю.",
+    "clear": "Удалить сообщение.",
     "del": "Удалить сообщение, на которое вы ответили, если автор не выше вас по роли.",
     "staff": "Показать список модераторов беседы.",
     "olist": "Показать модераторов, которые сейчас в беседе.",
@@ -120,7 +133,7 @@ COMMAND_DESCRIPTIONS = {
     "gnick": "Показать глобальный ник в привязанной группе.",
     "getwarn": "Показать число предупреждений пользователя.",
     "unmute": "Снять мут с пользователя.",
-    "unwarn": "Снять от 1 до 3 выговоров пользователя.",
+    "unwarn": "Снять предупреждение пользователю.",
     "mutelist": "Показать пользователей с активным мутом.",
     "warnlist": "Показать активные предупреждения беседы.",
     "addmoder": "Назначить модератором фильмов.",
@@ -128,11 +141,11 @@ COMMAND_DESCRIPTIONS = {
     "addmlmoder": "Назначить модератором фильмов (устаревшая команда).",
     "delmlmoder": "Снять с должности модератора фильмов (устаревшая команда).",
     "ban": "Заблокировать пользователя в этой беседе.",
-    "unban": "Снять локальную блокировку пользователя.",
-    "timeout": "Переключить режим тишины; также принимает on/off.",
+    "unban": "Разблокировать пользователя в этой беседе.",
+    "timeout": "Включить или выключить режим тишины беседы.",
     "zov": "Упомянуть участников текущей беседы.",
-    "addadmin": "Назначить администратором беседы.",
-    "deladmin": "Снять с должности администратора беседы.",
+    "addadmin": "Назначить на должность администратора группы.",
+    "deladmin": "Снять с должности администратора отдела.",
     "logs": "Показать последние действия модераторов.",
     "skick": "Исключить пользователя из всех бесед отдела.",
     "gban": "Заблокировать пользователя во всех беседах группы.",
@@ -145,7 +158,7 @@ COMMAND_DESCRIPTIONS = {
     "antitag": "Настроить запрет упоминаний выбранных пользователей.",
     "pin": "Закрепить сообщение, на которое дан ответ.",
     "unpin": "Открепить сообщение в текущей беседе.",
-    "addzam": "Назначить заместителем главы отдела.",
+    "addzam": "Назначить на должность главы отдела кинопоказов.",
     "delzam": "Снять с должности заместителя главы отдела.",
     "otdel": "Создать отдел бесед.",
     "delotdel": "Удалить принадлежащий вам отдел бесед.",
