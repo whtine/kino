@@ -19,8 +19,8 @@ from bot.utils.formatters import (
     format_user_info,
     format_user_mention,
 )
-from bot.utils.permissions import get_role_name
-from bot.keyboards import get_help_keyboard
+from bot.utils.permissions import get_required_role, get_role_name
+from bot.keyboards import get_help_keyboard, get_punishment_keyboard
 from bot.utils.vk_api import vk_api
 from config import config
 from db.repositories.chats import ChatsRepository
@@ -149,9 +149,11 @@ async def _add_log(
     kind: str,
     reason: Optional[str] = None,
     duration: Optional[timedelta] = None,
-) -> None:
-    if not await punishments.add(chat_id, target_id, moderator_id, kind, reason, duration):
+) -> dict:
+    record = await punishments.add(chat_id, target_id, moderator_id, kind, reason, duration)
+    if not record:
         raise RuntimeError(f"Не удалось сохранить запись действия {kind}.")
+    return record
 
 
 async def _delete_clear_messages_later(chat_id: int, cmids: list[int]) -> None:
@@ -396,8 +398,20 @@ async def command_router(message: Message):
                 return
             reason = " ".join(rest) or None
             count = await members.add_warn(chat_id, target_id)
-            await _add_log(chat_id, target_id, user_id, "warn", reason)
-            await message.answer(f"⚠️ {format_user_mention(target_id)} получил предупреждение ({count}).")
+            record = await _add_log(chat_id, target_id, user_id, "warn", reason)
+            names = (
+                await vk_api.get_member_names(chat_id, [user_id, target_id])
+                if vk_api
+                else {}
+            )
+            moderator = format_user_mention(user_id, names.get(user_id))
+            target = format_user_mention(target_id, names.get(target_id))
+            await message.answer(
+                f"⚠️ {moderator} выдал предупреждение {target}.\n"
+                f"Причина: {reason or 'не указана'}\n"
+                f"Активных предупреждений: {count}.",
+                keyboard=get_punishment_keyboard("unwarn", target_id, record["id"]),
+            )
             return
         if command in {"kick", "ban", "skick"}:
             target_id, rest = _target_from_args(message, args)
@@ -421,15 +435,38 @@ async def command_router(message: Message):
             if not kicked and command != "ban":
                 await message.answer("❌ Не удалось исключить пользователя. Проверьте права бота.")
                 return
-            await _add_log(chat_id, target_id, user_id, command, reason)
+            record = await _add_log(chat_id, target_id, user_id, command, reason)
+            names = (
+                await vk_api.get_member_names(chat_id, [user_id, target_id])
+                if vk_api
+                else {}
+            )
+            moderator = format_user_mention(user_id, names.get(user_id))
+            target = format_user_mention(target_id, names.get(target_id))
+            action_text = {
+                "ban": "заблокировал и исключил",
+                "skick": "исключил с проверкой роли",
+                "kick": "исключил",
+            }[command]
+            notice = (
+                f"👢 {moderator} {action_text} {target}.\n"
+                f"Причина: {reason or 'не указана'}"
+            )
             if command == "ban" and not kicked:
                 await message.answer(
-                    f"⚠️ {format_user_mention(target_id)} добавлен в список блокировок, "
-                    "но исключить не удалось. При следующем входе блокировка сработает."
+                    f"⚠️ {notice}\nНе удалось исключить, блокировка сработает "
+                    "при следующем входе.",
+                    keyboard=get_punishment_keyboard("unban", target_id, record["id"]),
                 )
             else:
-                action = "заблокирован и исключён" if command == "ban" else "исключён"
-                await message.answer(f"👢 {format_user_mention(target_id)} {action} из беседы.")
+                await message.answer(
+                    notice,
+                    keyboard=get_punishment_keyboard(
+                        "unban" if command == "ban" else "restore_kick",
+                        target_id,
+                        record["id"],
+                    ),
+                )
             return
         if command == "unban":
             target_id, _ = _target_from_args(message, args)
@@ -471,9 +508,19 @@ async def command_router(message: Message):
             expires = datetime.now(timezone.utc) + duration
             if not await members.set_mute(chat_id, target_id, True, expires.isoformat()):
                 raise RuntimeError("Не удалось сохранить статус мута.")
-            await _add_log(chat_id, target_id, user_id, "mute", reason, duration)
+            record = await _add_log(chat_id, target_id, user_id, "mute", reason, duration)
+            names = (
+                await vk_api.get_member_names(chat_id, [user_id, target_id])
+                if vk_api
+                else {}
+            )
+            moderator = format_user_mention(user_id, names.get(user_id))
+            target = format_user_mention(target_id, names.get(target_id))
             await message.answer(
-                f"🔇 {format_user_mention(target_id)} ограничен на {format_duration(duration)}."
+                f"🔇 {moderator} выдал мут {target}.\n"
+                f"Причина: {reason or 'не указана'}\n"
+                f"Срок: {format_duration(duration)}.",
+                keyboard=get_punishment_keyboard("unmute", target_id, record["id"]),
             )
             return
         if command == "unmute":
@@ -651,8 +698,12 @@ async def command_router(message: Message):
                     if vk_api
                     else {}
                 )
-                actor = names.get(user_id) or f"ID {user_id}"
-                target = names.get(target_id) or f"ID {target_id}"
+                actor = format_user_mention(
+                    user_id, names.get(user_id) or f"ID {user_id}"
+                )
+                target = format_user_mention(
+                    target_id, names.get(target_id) or f"ID {target_id}"
+                )
                 await message.answer(
                     f"🏷 {actor} изменил никнейм {target}. "
                     f"Новый никнейм: «{new_nickname}»."
@@ -672,8 +723,12 @@ async def command_router(message: Message):
                     if vk_api
                     else {}
                 )
-                actor = names.get(user_id) or f"ID {user_id}"
-                target = names.get(target_id) or f"ID {target_id}"
+                actor = format_user_mention(
+                    user_id, names.get(user_id) or f"ID {user_id}"
+                )
+                target = format_user_mention(
+                    target_id, names.get(target_id) or f"ID {target_id}"
+                )
                 await message.answer(
                     f"✅ {actor} удалил никнейм у {target}."
                 )
@@ -1045,7 +1100,12 @@ async def command_router(message: Message):
 @bp.on.raw_event("message_event", MessageEvent)
 async def help_level_callback(event: MessageEvent):
     payload = event.payload
-    if not isinstance(payload, dict) or payload.get("cmd") != "help_level":
+    if not isinstance(payload, dict):
+        return
+    if payload.get("cmd") == "revoke_punishment":
+        await _handle_punishment_callback(event, payload)
+        return
+    if payload.get("cmd") != "help_level":
         return
 
     level = payload.get("level")
@@ -1069,6 +1129,128 @@ async def help_level_callback(event: MessageEvent):
             event.peer_id,
         )
         await event.show_snackbar("Не удалось обновить список команд.")
+
+
+async def _handle_punishment_callback(event: MessageEvent, payload: dict) -> None:
+    action = payload.get("action")
+    target_id = payload.get("target_id")
+    punishment_id = payload.get("punishment_id")
+    allowed_actions = {"unwarn", "unmute", "unban", "restore_kick"}
+    if (
+        action not in allowed_actions
+        or isinstance(target_id, bool)
+        or not isinstance(target_id, int)
+        or target_id <= 0
+        or isinstance(punishment_id, bool)
+        or not isinstance(punishment_id, int)
+        or punishment_id <= 0
+        or event.peer_id < 2_000_000_000
+    ):
+        await event.show_snackbar("Некорректная кнопка наказания.")
+        return
+
+    try:
+        actor_role = await members.get_role(event.peer_id, event.user_id)
+        target_role = await members.get_role(event.peer_id, target_id)
+        required_action = "kick" if action == "restore_kick" else action
+        if actor_role < get_required_role(required_action) or actor_role <= target_role:
+            await event.show_snackbar(
+                "Недостаточно прав или пользователь имеет равную/старшую роль."
+            )
+            return
+
+        record = await punishments.get_by_id(event.peer_id, punishment_id)
+        if not record or record.get("target_id") != target_id:
+            await event.show_snackbar("Это наказание уже снято или недоступно.")
+            return
+
+        if action == "unwarn":
+            if record.get("type") != "warn":
+                await event.show_snackbar("Предупреждение уже недоступно.")
+                return
+            if not await punishments.delete_warn_by_id(
+                event.peer_id, target_id, punishment_id
+            ):
+                await event.show_snackbar("Это предупреждение уже снято.")
+                return
+            remaining = await members.remove_warn(event.peer_id, target_id)
+            await _add_log(event.peer_id, target_id, event.user_id, "unwarn")
+            result = f"Предупреждение снято. Осталось: {remaining}."
+        elif action == "unmute":
+            if record.get("type") != "mute":
+                await event.show_snackbar("Этот мут уже недоступен.")
+                return
+            latest_mute = await punishments.get_latest_by_type(
+                event.peer_id, target_id, "mute"
+            )
+            if (
+                not latest_mute
+                or latest_mute.get("id") != punishment_id
+                or not await members.is_muted(event.peer_id, target_id)
+            ):
+                await event.show_snackbar("Этот мут уже снят или заменён новым.")
+                return
+            if not await members.set_mute(event.peer_id, target_id, False):
+                raise RuntimeError("Не удалось снять мут.")
+            await _add_log(event.peer_id, target_id, event.user_id, "unmute")
+            result = "Мут снят."
+        elif action == "unban":
+            if record.get("type") != "ban":
+                await event.show_snackbar("Эта блокировка уже недоступна.")
+                return
+            from db.supabase import get_supabase
+
+            sb = get_supabase()
+            deleted = (
+                sb.table("chat_bans").delete()
+                .eq("chat_id", event.peer_id)
+                .eq("user_id", target_id)
+                .select("user_id")
+                .execute()
+            )
+            if not deleted.data:
+                await event.show_snackbar("Блокировка уже снята.")
+                return
+            if not vk_api or not await vk_api.add_chat_user(event.peer_id, target_id):
+                await _add_log(event.peer_id, target_id, event.user_id, "unban")
+                await event.show_snackbar(
+                    "Блокировка снята, но добавить пользователя обратно не удалось."
+                )
+                return
+            await _add_log(event.peer_id, target_id, event.user_id, "unban")
+            result = "Блокировка снята, пользователь добавлен обратно."
+        else:
+            if record.get("type") not in {"kick", "skick"}:
+                await event.show_snackbar("Это исключение уже недоступно.")
+                return
+            if not vk_api:
+                raise RuntimeError("VK API не инициализирован.")
+            conversation_members = await vk_api.get_conversation_members(event.peer_id)
+            if any(
+                (
+                    member.get("member_id")
+                    if isinstance(member, dict)
+                    else getattr(member, "member_id", None)
+                )
+                == target_id
+                for member in conversation_members
+            ):
+                result = "Пользователь уже находится в беседе."
+            elif not await vk_api.add_chat_user(event.peer_id, target_id):
+                await event.show_snackbar("Не удалось вернуть пользователя в беседу.")
+                return
+            else:
+                result = "Пользователь возвращён в беседу."
+
+        await event.show_snackbar(result)
+    except Exception:
+        logger.exception(
+            "Could not revoke punishment %s for user %s in chat %s",
+            punishment_id,
+            target_id,
+            event.peer_id,
+        )
+        await event.show_snackbar("Не удалось снять наказание. Попробуйте позже.")
 
 
 async def _assign_role(message: Message, args: list[str], role: int, actor_id: int, chat_id: int):

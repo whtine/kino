@@ -26,6 +26,36 @@ class PunishmentsRepository:
         result = sb.table(self.table).insert(data).select("*").execute()
         return result.data[0] if result.data else None
 
+    async def get_by_id(self, chat_id: int, punishment_id: int) -> Optional[Dict[str, Any]]:
+        sb = get_supabase()
+        result = (
+            sb.table(self.table).select("*").eq("chat_id", chat_id)
+            .eq("id", punishment_id).limit(1).execute()
+        )
+        return result.data[0] if result.data else None
+
+    async def get_latest_by_type(
+        self, chat_id: int, target_id: int, punishment_type: str
+    ) -> Optional[Dict[str, Any]]:
+        sb = get_supabase()
+        result = (
+            sb.table(self.table).select("*").eq("chat_id", chat_id)
+            .eq("target_id", target_id).eq("type", punishment_type)
+            .order("created_at", desc=True).limit(1).execute()
+        )
+        return result.data[0] if result.data else None
+
+    async def delete_warn_by_id(
+        self, chat_id: int, target_id: int, punishment_id: int
+    ) -> bool:
+        sb = get_supabase()
+        result = (
+            sb.table(self.table).delete().eq("chat_id", chat_id)
+            .eq("target_id", target_id).eq("id", punishment_id)
+            .eq("type", "warn").select("id").execute()
+        )
+        return bool(result.data)
+
     async def get_history(self, chat_id: int, target_id: int, limit: int = 50) -> List[Dict[str, Any]]:
         """Get punishment history for user in chat."""
         sb = get_supabase()

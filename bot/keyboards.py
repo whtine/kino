@@ -15,6 +15,21 @@ def get_activation_keyboard() -> str:
     return keyboard.get_json()
 
 
+def get_punishment_keyboard(action: str, target_id: int, punishment_id: int | None = None) -> str:
+    payload = {"cmd": "revoke_punishment", "action": action, "target_id": target_id}
+    if punishment_id is not None:
+        payload["punishment_id"] = punishment_id
+    labels = {
+        "unwarn": "Снять предупреждение",
+        "unmute": "Снять мут",
+        "unban": "Снять блокировку",
+        "restore_kick": "Вернуть в беседу",
+    }
+    keyboard = Keyboard(one_time=False, inline=True)
+    keyboard.add(Callback(labels[action], payload))
+    return keyboard.get_json()
+
+
 def get_help_keyboard(user_role: int, selected_level: int = 0) -> str:
     """Build inline callback buttons for the help level selector."""
     keyboard = Keyboard(one_time=False, inline=True)
