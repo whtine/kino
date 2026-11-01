@@ -15,7 +15,7 @@ from db.repositories.members import MembersRepository
 logger = logging.getLogger(__name__)
 chats_repo = ChatsRepository()
 members_repo = MembersRepository()
-ALLOWED_COMMANDS = {"activate", "start", "help"}
+ALLOWED_COMMANDS = {"activate", "start"}
 
 
 class ActivationMiddleware(BaseMiddleware[Message]):
@@ -29,21 +29,35 @@ class ActivationMiddleware(BaseMiddleware[Message]):
             return
 
         text = (getattr(message, "text", None) or "").strip()
+        action = getattr(message, "action", None)
+        action_type = getattr(action, "type", None)
+        if action_type is not None and str(getattr(action_type, "value", action_type)) in {
+            "chat_invite_user",
+            "chat_invite_user_by_link",
+            "chat_invite_user_by_message_request",
+        }:
+            return
+
         command = (
             text.split()[0].split("@", 1)[0].lstrip("/").lower()
             if text.startswith("/")
             else None
         )
-        activation_command = str(config.activation_command or "*").strip()
-
-        if text == activation_command or text == "*" or command in ALLOWED_COMMANDS:
-            # Activation and basic user commands are always allowed
-            return
+        activation_command = (
+            str(config.activation_command or "/activate")
+            .strip()
+            .lstrip("/")
+            .split("@", 1)[0]
+            .lower()
+        )
 
         chat = await chats_repo.get(chat_id)
         if chat is None or not chat.get("is_active"):
+            if command in ALLOWED_COMMANDS or command == activation_command or text == "*":
+                return
             self.send({"denied": True, "reason": "chat_not_activated"})
             self.stop(f"Чат {chat_id} не активирован")
+        if command in ALLOWED_COMMANDS or command == activation_command or text == "*":
             return
 
         if message.from_id > 0 and not (getattr(message, "text", None) or "").strip().startswith("/"):

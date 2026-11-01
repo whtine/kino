@@ -9,6 +9,12 @@ def get_staff_keyboard() -> dict:
     return Keyboard(one_time=True).add(Text("Обновить", {"cmd": "staff_refresh"})).get_json()
 
 
+def get_activation_keyboard() -> str:
+    keyboard = Keyboard(one_time=False, inline=True)
+    keyboard.add(Callback("Активировать", {"cmd": "activate_chat"}))
+    return keyboard.get_json()
+
+
 def get_help_keyboard(user_role: int, selected_level: int = 0) -> str:
     """Build inline callback buttons for the help level selector."""
     keyboard = Keyboard(one_time=False, inline=True)

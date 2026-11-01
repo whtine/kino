@@ -6,6 +6,7 @@ import time
 from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+from urllib.parse import urlsplit
 
 from vkbottle.bot import Blueprint, Message, MessageEvent
 
@@ -192,6 +193,8 @@ async def command_router(message: Message):
     activation_command = activation_command.lstrip("/").split("@", 1)[0].lower()
     if command in {"activate", "deactivate", activation_command}:
         return
+    if command == "start":
+        return
     if _is_duplicate_message(message):
         logger.debug(
             "Ignoring duplicate command event %s in chat %s",
@@ -226,6 +229,80 @@ async def command_router(message: Message):
             return
         if command == "chatid":
             await message.answer(f"🆔 ID беседы: {chat_id}")
+            return
+        if command == "info":
+            chat = await chats.get(chat_id)
+            settings = (chat or {}).get("settings") or {}
+            links = settings.get("info_links") or []
+            if not isinstance(links, list) or any(
+                not isinstance(link, dict)
+                or not isinstance(link.get("label"), str)
+                or not isinstance(link.get("url"), str)
+                for link in links
+            ):
+                raise RuntimeError("Некорректный формат официальных ссылок в настройках беседы.")
+            action = args[0].lower() if args else ""
+            if action in {"add", "remove", "удалить", "добавить"}:
+                role = await members.get_role(chat_id, user_id)
+                if role < 5:
+                    await message.answer(
+                        "⛔ Настраивать официальные ссылки могут пользователи с ролью 5 и выше."
+                    )
+                    return
+
+                if action in {"add", "добавить"}:
+                    if len(args) < 3:
+                        await message.answer(
+                            "Использование: /info add Название ссылки https://example.com"
+                        )
+                        return
+                    label = " ".join(args[1:-1]).strip()[:64]
+                    url = args[-1].strip()
+                    parsed_url = urlsplit(url)
+                    if (
+                        not label
+                        or len(url) > 500
+                        or parsed_url.scheme not in {"http", "https"}
+                        or not parsed_url.netloc
+                    ):
+                        await message.answer(
+                            "Укажите название и корректную ссылку, начинающуюся с http:// или https://."
+                        )
+                        return
+                    if len(links) >= 20:
+                        await message.answer("Можно добавить не более 20 ссылок.")
+                        return
+                    links.append({"label": label, "url": url})
+                    if not await chats.update_settings(chat_id, {"info_links": links}):
+                        raise RuntimeError("Не удалось сохранить официальные ссылки.")
+                    await message.answer(f"✅ Ссылка «{label}» добавлена в /info.")
+                    return
+
+                if len(args) != 2 or not args[1].isdigit():
+                    await message.answer("Использование: /info remove НОМЕР")
+                    return
+                index = int(args[1]) - 1
+                if not 0 <= index < len(links):
+                    await message.answer("Ссылки с таким номером нет. Посмотрите список: /info")
+                    return
+                removed = links.pop(index)
+                if not await chats.update_settings(chat_id, {"info_links": links}):
+                    raise RuntimeError("Не удалось удалить официальную ссылку.")
+                await message.answer(f"✅ Ссылка «{removed.get('label', 'без названия')}» удалена.")
+                return
+
+            if not links:
+                await message.answer(
+                    "Официальные ссылки ещё не добавлены. Пользователь с ролью 5+ "
+                    "может добавить ссылку командой /info add Название https://example.com."
+                )
+                return
+            lines = ["🔗 Официальные ресурсы отдела:"]
+            lines.extend(
+                f"{index}) {link['label']}: {link['url']}"
+                for index, link in enumerate(links, start=1)
+            )
+            await message.answer("\n".join(lines))
             return
         if command == "top":
             rows = await stats.get_top(chat_id, 10)

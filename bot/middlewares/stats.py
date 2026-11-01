@@ -30,6 +30,8 @@ class StatsMiddleware(BaseMiddleware[Message]):
         if not chat or not chat.get("is_active"):
             return
 
+        if getattr(message, "action", None):
+            return
         cmid = getattr(message, "conversation_message_id", None)
         if cmid is not None:
             remember_chat_message(chat_id, cmid, user_id)

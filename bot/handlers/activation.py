@@ -2,8 +2,10 @@
 
 import logging
 
-from vkbottle.bot import Blueprint, Message
+from vkbottle import Keyboard
+from vkbottle.bot import Blueprint, Message, MessageEvent
 
+from bot.keyboards import get_activation_keyboard
 from bot.utils.formatters import format_user_mention
 from bot.utils.vk_api import vk_api
 from config import config
@@ -15,30 +17,30 @@ bp = Blueprint("activation")
 chats_repo = ChatsRepository()
 members_repo = MembersRepository()
 
+START_GREETING = (
+    "Ура, вы меня добавили сюда! Я вам очень благодарен. "
+    "Я бот, созданный именно для киностудии, чтобы выполнять задачи модерации. "
+    "Нажмите снизу кнопку «Активировать», чтобы я начал работать в беседе."
+)
 
-async def _activate_in_chat(message: Message) -> None:
-    """Shared activation routine for /activate and * commands."""
-    chat_id = message.peer_id
-    user_id = message.from_id
+
+async def _activate_chat(chat_id: int, user_id: int) -> tuple[bool, str]:
     if chat_id < 2_000_000_000:
-        await message.answer("❌ Активация доступна только в беседах.")
-        return
+        return False, "❌ Активация доступна только в беседах."
     try:
         is_admin = bool(vk_api and await vk_api.is_chat_admin(chat_id, user_id))
     except Exception:
-        await message.answer("❌ Не удалось проверить права администратора.")
-        return
+        logger.exception("Could not check admin rights for activation in chat %s", chat_id)
+        return False, "❌ Не удалось проверить права администратора."
     if not is_admin:
-        await message.answer("❌ Только администратор беседы может активировать бота.")
-        return
+        return False, "❌ Только администратор беседы может активировать бота."
 
     try:
         chat = await chats_repo.get_or_create(chat_id)
         if not chat:
             raise RuntimeError("Не удалось создать запись беседы.")
         if chat.get("is_active"):
-            await message.answer("✅ Бот уже активирован в этой беседе.")
-            return
+            return True, "✅ Бот уже активирован в этой беседе."
         details = await vk_api.get_chat_info(chat_id) if vk_api else None
         if details and details.get("title"):
             if not await chats_repo.update(chat_id, {"title": details["title"]}):
@@ -49,13 +51,69 @@ async def _activate_in_chat(message: Message) -> None:
             raise RuntimeError("Не удалось сохранить статус активации.")
     except Exception:
         logger.exception("Could not activate chat %s", chat_id)
-        await message.answer("❌ Не удалось активировать беседу. Попробуйте позже.")
-        return
+        return False, "❌ Не удалось активировать беседу. Попробуйте позже."
 
-    await message.answer(
+    return True, (
         f"✅ Бот активирован!\nАдминистратор {format_user_mention(user_id)} "
         "получил роль 6 для первоначальной настройки.\nНапишите /help."
     )
+
+
+async def _activate_in_chat(message: Message) -> None:
+    succeeded, response = await _activate_chat(message.peer_id, message.from_id)
+    await message.answer(response)
+
+
+@bp.on.chat_message(command="start")
+async def start_chat(message: Message):
+    chat_id = message.peer_id
+    if chat_id < 2_000_000_000:
+        await message.answer(START_GREETING, keyboard=get_activation_keyboard())
+        return
+    chat = await chats_repo.get(chat_id)
+    if not chat or not chat.get("is_active"):
+        await message.answer(START_GREETING, keyboard=get_activation_keyboard())
+        return
+    await message.answer("Бот уже активирован в этой беседе. Список команд: /help")
+
+
+@bp.on.chat_message()
+async def welcome_new_chat_member(message: Message):
+    action = getattr(message, "action", None)
+    action_type = getattr(action, "type", None)
+    action_type = getattr(action_type, "value", action_type)
+    if action_type not in {
+        "chat_invite_user",
+        "chat_invite_user_by_link",
+        "chat_invite_user_by_message_request",
+    }:
+        return
+    member_id = getattr(action, "member_id", None)
+    if message.peer_id < 2_000_000_000 or not member_id or member_id < 0:
+        return
+
+    names = await vk_api.get_member_names(message.peer_id, [member_id]) if vk_api else {}
+    name = names.get(member_id) or "Участник"
+    await message.answer(
+        f"{name}, добро пожаловать в беседу!\n"
+        "Не забудь прочитать закреплённое сообщение!\n"
+        "Посмотреть ссылки на официальные ресурсы отдела: /info"
+    )
+
+
+@bp.on.raw_event("message_event", MessageEvent)
+async def activation_button(event: MessageEvent):
+    if not isinstance(event.payload, dict) or event.payload.get("cmd") != "activate_chat":
+        return
+    succeeded, response = await _activate_chat(event.peer_id, event.user_id)
+    if not succeeded:
+        await event.show_snackbar(response)
+        return
+    await event.edit_message(
+        message=response,
+        keyboard=Keyboard(one_time=False, inline=True).get_json(),
+    )
+    await event.send_empty_answer()
 
 
 @bp.on.chat_message(command="activate")
