@@ -45,6 +45,18 @@ class PunishmentsRepository:
         )
         return result.data[0] if result.data else None
 
+    async def get_latest_role_assignment(
+        self, chat_id: int, target_id: int, role: int, role_name: str
+    ) -> Optional[Dict[str, Any]]:
+        sb = get_supabase()
+        result = (
+            sb.table(self.table).select("created_at").eq("chat_id", chat_id)
+            .eq("target_id", target_id).eq("type", "role_change")
+            .ilike("reason", f"%→ {role_name} ({role})")
+            .order("created_at", desc=True).limit(1).execute()
+        )
+        return result.data[0] if result.data else None
+
     async def delete_warn_by_id(
         self, chat_id: int, target_id: int, punishment_id: int
     ) -> bool:

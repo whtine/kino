@@ -9,14 +9,17 @@ from vkbottle.dispatch.rules.base import ChatActionRule
 from bot.keyboards import get_activation_keyboard
 from bot.utils.formatters import format_user_mention
 from bot.utils.vk_api import vk_api
+from bot.utils.permissions import get_role_name
 from config import config
 from db.repositories.chats import ChatsRepository
 from db.repositories.members import MembersRepository
+from db.repositories.punishments import PunishmentsRepository
 
 logger = logging.getLogger(__name__)
 bp = Blueprint("activation")
 chats_repo = ChatsRepository()
 members_repo = MembersRepository()
+punishments_repo = PunishmentsRepository()
 
 START_GREETING = (
     "Ура, вы меня добавили сюда! Я вам очень благодарен. "
@@ -48,6 +51,15 @@ async def _activate_chat(chat_id: int, user_id: int) -> tuple[bool, str]:
                 raise RuntimeError("Не удалось сохранить название беседы.")
         if not await members_repo.set_role(chat_id, user_id, 6):
             raise RuntimeError("Не удалось назначить роль владельца.")
+        role_log = await punishments_repo.add(
+            chat_id,
+            user_id,
+            user_id,
+            "role_change",
+            f"Роль: назначено → {get_role_name(6)} (6)",
+        )
+        if not role_log:
+            raise RuntimeError("Не удалось сохранить дату назначения роли.")
         if not await chats_repo.set_active(chat_id, True):
             raise RuntimeError("Не удалось сохранить статус активации.")
     except Exception:

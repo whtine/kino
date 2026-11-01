@@ -40,7 +40,7 @@ stats = StatsRepository()
 groups = GroupsRepository()
 global_data = GlobalBansRepository()
 
-TARGET_PATTERN = re.compile(r"(?:\[id|@id)(\d+)(?:\||\])?")
+TARGET_PATTERN = re.compile(r"^(?:\[id|@id)(\d+)(?:\||\])?")
 _SEEN_MESSAGE_TTL_SECONDS = 120
 _MAX_SEEN_MESSAGES = 4096
 _seen_messages: OrderedDict[tuple[int, int], float] = OrderedDict()
@@ -96,8 +96,9 @@ def _target_from_args(message: Message, args: list[str]) -> tuple[Optional[int],
         return message.reply_message.from_id, args
     if args:
         token = args[0]
-        if token.startswith("[") and "|" in token:
-            token = token.split("|")[0].replace("[id", "").replace("]", "")
+        mention = TARGET_PATTERN.match(token)
+        if mention:
+            return int(mention.group(1)), args[1:]
         token = token.lstrip("@").strip()
         if token.isdigit() and int(token) > 0:
             return int(token), args[1:]
@@ -219,7 +220,7 @@ async def command_router(message: Message):
                 keyboard=get_help_keyboard(user_role, selected_level),
             )
             return
-        if command in {"id", "stats"}:
+        if command == "id":
             target_id, _ = _target_from_args(message, args)
             target_id = target_id or user_id
             member = await members.get_or_create(chat_id, target_id)
@@ -227,6 +228,42 @@ async def command_router(message: Message):
             names = await vk_api.get_member_names(chat_id, [target_id]) if vk_api else {}
             await message.answer(
                 format_user_info(target_id, chat_id, member, stat, names.get(target_id))
+            )
+            return
+        if command == "stats":
+            target_id, _ = _target_from_args(message, args)
+            target_id = target_id or user_id
+            member = await members.get_or_create(chat_id, target_id)
+            stat = await stats.get_user_stats(chat_id, target_id)
+            role = member.get("role", 0)
+            role_name = get_role_name(role)
+            assignment = await punishments.get_latest_role_assignment(
+                chat_id, target_id, role, role_name
+            )
+            assigned_at = assignment.get("created_at") if assignment else None
+            if assigned_at:
+                try:
+                    if isinstance(assigned_at, str):
+                        assigned_at = datetime.fromisoformat(
+                            assigned_at.replace("Z", "+00:00")
+                        )
+                    assigned_at = assigned_at.astimezone(timezone.utc).strftime(
+                        "%d.%m.%Y %H:%M UTC"
+                    )
+                except (AttributeError, TypeError, ValueError):
+                    logger.warning(
+                        "Could not format role assignment date for user %s in chat %s",
+                        target_id,
+                        chat_id,
+                    )
+                    assigned_at = None
+            names = await vk_api.get_member_names(chat_id, [target_id]) if vk_api else {}
+            await message.answer(
+                f"Nick_Name: {names.get(target_id) or member.get('nickname') or 'Не указано'}\n"
+                f"ID: {target_id}\n"
+                f"Должность: {role_name}\n"
+                f"Кол-во сообщений в беседе: {stat.get('count', 0) if stat else 0}\n"
+                f"Дата постановления: {assigned_at or 'Не указана'}"
             )
             return
         if command == "chatid":
@@ -1300,9 +1337,16 @@ async def _assign_role(message: Message, args: list[str], role: int, actor_id: i
         f"Роль: {get_role_name(target_role)} ({target_role}) → "
         f"{get_role_name(role)} ({role})",
     )
+    names = (
+        await vk_api.get_member_names(chat_id, [actor_id, target_id])
+        if vk_api
+        else {}
+    )
+    actor = format_user_mention(actor_id, names.get(actor_id) or f"ID {actor_id}")
+    target = format_user_mention(target_id, names.get(target_id) or f"ID {target_id}")
     await message.answer(
-        f"✅ Роль {format_user_mention(target_id)} изменена на "
-        f"{get_role_name(role)} ({role})."
+        f"✅ {actor} назначил на должность "
+        f"{get_role_name(role).lower()} пользователя {target}."
     )
 
 

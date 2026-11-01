@@ -97,7 +97,7 @@ def format_user_info(
     lines = [
         f"👤 {format_user_mention(user_id, name)}",
         f"🆔 ID: {user_id}",
-        f"🔗 Профиль: {format_user_link(user_id)}",
+        f"Оригинальная ссылка пользователя: {format_user_link(user_id)}",
         f"🎭 Роль: {get_role_name(member_data.get('role', 0))} "
         f"({member_data.get('role', 0)})",
     ]
