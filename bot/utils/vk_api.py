@@ -218,20 +218,60 @@ class VKAPIWrapper:
         return False
 
     async def get_member_names(self, chat_id: int, user_ids: List[int]) -> Dict[int, str]:
-        profiles = await self.get_member_profiles(chat_id)
         names: Dict[int, str] = {}
         wanted = set(user_ids or [])
+        if not wanted:
+            return names
+
+        profiles = await self.get_member_profiles(chat_id)
         for profile in profiles:
-            profile_id = profile.get("id") if isinstance(profile, dict) else profile.id
+            profile_id = (
+                profile.get("id")
+                if isinstance(profile, dict)
+                else getattr(profile, "id", None)
+            )
             if profile_id is None or profile_id not in wanted:
                 continue
             first_name = (
-                profile.get("first_name") if isinstance(profile, dict) else profile.first_name
+                profile.get("first_name")
+                if isinstance(profile, dict)
+                else getattr(profile, "first_name", "")
             ) or ""
             last_name = (
-                profile.get("last_name") if isinstance(profile, dict) else profile.last_name
+                profile.get("last_name")
+                if isinstance(profile, dict)
+                else getattr(profile, "last_name", "")
             ) or ""
-            names[profile_id] = f"{first_name} {last_name}".strip()
+            display_name = f"{first_name} {last_name}".strip()
+            if not display_name:
+                display_name = (
+                    profile.get("screen_name")
+                    if isinstance(profile, dict)
+                    else getattr(profile, "screen_name", "")
+                ) or ""
+            if display_name:
+                names[profile_id] = display_name
+
+        missing_ids = wanted - names.keys()
+        if missing_ids:
+            try:
+                profiles = await self.api.users.get(user_ids=list(missing_ids))
+            except Exception:
+                logger.exception(
+                    "Could not retrieve VK names for users %s in chat %s",
+                    sorted(missing_ids),
+                    chat_id,
+                )
+            else:
+                for profile in profiles:
+                    profile_id = getattr(profile, "id", None)
+                    first_name = getattr(profile, "first_name", "") or ""
+                    last_name = getattr(profile, "last_name", "") or ""
+                    display_name = f"{first_name} {last_name}".strip()
+                    if not display_name:
+                        display_name = getattr(profile, "screen_name", "") or ""
+                    if profile_id is not None and display_name:
+                        names[profile_id] = display_name
         return names
 
     async def mention_all(self, chat_id: int, max_mentions: int = 100) -> str:

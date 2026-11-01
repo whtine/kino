@@ -396,6 +396,37 @@ async def command_router(message: Message):
             await message.answer(f"✅ Предупреждение снято. Осталось: {count}.")
             return
         if command == "clear":
+            reply = message.reply_message
+            if reply:
+                target_id = int(reply.from_id)
+                actor_role = await members.get_role(chat_id, user_id)
+                if target_id > 0:
+                    target_role = await members.get_role(chat_id, target_id)
+                    if target_role > actor_role:
+                        await message.answer(
+                            "⛔ Нельзя удалять сообщения пользователей с более высокой ролью."
+                        )
+                        return
+                elif target_id != -config.group_id:
+                    await message.answer(
+                        "⛔ Нельзя определить роль автора этого сообщения."
+                    )
+                    return
+
+                target_cmid = getattr(reply, "conversation_message_id", None)
+                if (
+                    not target_cmid
+                    or not vk_api
+                    or not await vk_api.delete_message(chat_id, [target_cmid])
+                ):
+                    await message.answer(
+                        "❌ Не удалось удалить отмеченное сообщение. Проверьте права "
+                        "сообщества и администратора беседы на удаление сообщений."
+                    )
+                    return
+                await message.answer("✅ Отмеченное сообщение удалено.")
+                return
+
             amount = int(args[0]) if args and args[0].isdigit() else 1
             if not 1 <= amount <= 100:
                 await message.answer("Количество сообщений должно быть от 1 до 100.")
@@ -501,7 +532,16 @@ async def command_router(message: Message):
                     "nickname_set",
                     f"Локальный ник: {previous_nickname or 'не установлен'} → {new_nickname}",
                 )
-                await message.answer(f"🏷 Ник пользователя изменён на «{new_nickname}».")
+                names = (
+                    await vk_api.get_member_names(chat_id, [user_id, target_id])
+                    if vk_api
+                    else {}
+                )
+                actor = format_user_mention(user_id, names.get(user_id))
+                target = format_user_mention(target_id, names.get(target_id))
+                await message.answer(
+                    f"🏷 {actor} изменил ник {target} на «{new_nickname}»."
+                )
             else:
                 if not await members.set_nickname(chat_id, target_id, None):
                     raise RuntimeError("Не удалось удалить никнейм.")
@@ -512,7 +552,16 @@ async def command_router(message: Message):
                     "nickname_removed",
                     f"Удалён локальный ник: {previous_nickname or 'не установлен'}",
                 )
-                await message.answer("✅ Никнейм удалён.")
+                names = (
+                    await vk_api.get_member_names(chat_id, [user_id, target_id])
+                    if vk_api
+                    else {}
+                )
+                actor = format_user_mention(user_id, names.get(user_id))
+                target = format_user_mention(target_id, names.get(target_id))
+                await message.answer(
+                    f"✅ {actor} удалил ник у {target}."
+                )
             return
         if command == "getnick":
             target_id, _ = _target_from_args(message, args)
