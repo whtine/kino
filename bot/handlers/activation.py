@@ -98,7 +98,15 @@ async def welcome_new_chat_member(message: Message):
     }:
         return
     member_id = getattr(action, "member_id", None)
-    if message.peer_id < 2_000_000_000 or not member_id or member_id < 0:
+    if message.peer_id < 2_000_000_000 or not member_id:
+        return
+    if member_id == -config.group_id:
+        await message.answer(
+            START_GREETING,
+            keyboard=get_activation_keyboard(),
+        )
+        return
+    if member_id < 0:
         return
 
     names = await vk_api.get_member_names(message.peer_id, [member_id]) if vk_api else {}
