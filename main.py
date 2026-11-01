@@ -21,6 +21,7 @@ async def main() -> None:
     logging.info("VK bot starting")
     app = web.Application()
     app.router.add_get("/healthz", healthz)
+    app.router.add_get("/health", healthz)
     app.router.add_get("/", healthz)
     app.router.add_get("/ping", healthz)
     runner = web.AppRunner(app)

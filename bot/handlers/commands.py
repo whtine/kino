@@ -6,7 +6,7 @@ from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from vkbottle.bot import Blueprint, Message
+from vkbottle.bot import Blueprint, Message, MessageEvent
 
 from bot.utils.formatters import (
     format_duration,
@@ -179,14 +179,13 @@ async def command_router(message: Message):
             selected_level = (
                 int(args[0])
                 if args and args[0].isdigit()
-                else user_role
+                else 0
             )
-            text = (
-                format_help_level_text(user_role, selected_level)
-                if args and args[0].isdigit()
-                else format_help_text(user_role)
+            text = format_help_level_text(user_role, selected_level)
+            await message.answer(
+                text,
+                keyboard=get_help_keyboard(user_role, selected_level),
             )
-            await message.answer(text, keyboard=get_help_keyboard(user_role))
             return
         if command in {"id", "stats"}:
             target_id, _ = _target_from_args(message, args)
@@ -401,12 +400,55 @@ async def command_router(message: Message):
             if not 1 <= amount <= 100:
                 await message.answer("Количество сообщений должно быть от 1 до 100.")
                 return
+            actor_role = await members.get_role(chat_id, user_id)
+            higher_staff = await members.get_staff(chat_id, min_role=actor_role + 1)
+            protected_user_ids = {
+                int(entry["user_id"]) for entry in higher_staff
+            }
             if not vk_api or not await vk_api.clear_recent_messages(
-                chat_id, amount, message.conversation_message_id
+                chat_id,
+                amount,
+                message.conversation_message_id,
+                protected_user_ids,
             ):
-                await message.answer("❌ Не удалось удалить сообщения. Проверьте права бота.")
+                await message.answer(
+                    "❌ Не удалось удалить сообщения. Если в Render logs указана "
+                    "ошибка VK 15 (Access denied), включите сообщения сообщества "
+                    "и разрешите боту доступ к сообщениям беседы."
+                )
                 return
-            await message.answer("✅ Сообщения удалены.")
+            await message.answer(
+                "✅ Сообщения удалены. Сообщения пользователей с более высокой "
+                "ролью пропущены."
+            )
+            return
+        if command == "del":
+            reply = message.reply_message
+            if not reply:
+                await message.answer("Ответьте командой /del на сообщение, которое нужно удалить.")
+                return
+            target_id = int(reply.from_id)
+            if target_id > 0:
+                target_role = await members.get_role(chat_id, target_id)
+                actor_role = await members.get_role(chat_id, user_id)
+                if target_role > actor_role:
+                    await message.answer(
+                        "⛔ Нельзя удалять сообщения пользователей с более высокой ролью."
+                    )
+                    return
+            elif target_id != -config.group_id:
+                await message.answer(
+                    "⛔ Нельзя определить роль автора этого сообщения."
+                )
+                return
+            cmid = getattr(reply, "conversation_message_id", None)
+            if not cmid or not vk_api or not await vk_api.delete_message(chat_id, [cmid]):
+                await message.answer(
+                    "❌ Не удалось удалить сообщение. Проверьте права сообщества "
+                    "и администратора беседы на удаление сообщений."
+                )
+                return
+            await message.answer("✅ Сообщение удалено.")
             return
         if command in {"warnlist", "mutelist", "logs"}:
             if command == "warnlist":
@@ -489,11 +531,20 @@ async def command_router(message: Message):
                     int(entry["user_id"]),
                 )
             )
-            lines = [f"🏷 Пользователей с ником: {len(entries)}"]
-            lines.extend(
-                f"{index}) [id{entry['user_id']}|user] — {entry['nickname']}"
-                for index, entry in enumerate(entries, start=1)
+            names = (
+                await vk_api.get_member_names(
+                    chat_id, [int(entry["user_id"]) for entry in entries]
+                )
+                if vk_api
+                else {}
             )
+            lines = [f"🏷 Пользователей с ником: {len(entries)}"]
+            for index, entry in enumerate(entries, start=1):
+                user_id = int(entry["user_id"])
+                vk_name = names.get(user_id) or f"ID {user_id}"
+                lines.append(
+                    f"{index}) [id{user_id}|{vk_name}] — {entry['nickname']}"
+                )
             await message.answer("\n".join(lines))
             return
         if command == "gnick":
@@ -824,6 +875,35 @@ async def command_router(message: Message):
     except Exception:
         logger.exception("Command /%s failed for chat %s", command, message.peer_id)
         await message.answer("❌ Не удалось выполнить команду из-за ошибки. Попробуйте позже.")
+
+
+@bp.on.raw_event("message_event", MessageEvent)
+async def help_level_callback(event: MessageEvent):
+    payload = event.payload
+    if not isinstance(payload, dict) or payload.get("cmd") != "help_level":
+        return
+
+    level = payload.get("level")
+    if isinstance(level, bool) or not isinstance(level, int) or not 0 <= level <= 6:
+        await event.show_snackbar("Не удалось выбрать уровень команд.")
+        return
+    try:
+        user_role = await members.get_role(event.peer_id, event.user_id)
+        if event.peer_id < 2_000_000_000 or level > user_role:
+            await event.show_snackbar("Этот уровень вам недоступен.")
+            return
+        await event.edit_message(
+            message=format_help_level_text(user_role, level),
+            keyboard=get_help_keyboard(user_role, level),
+        )
+        await event.send_empty_answer()
+    except Exception:
+        logger.exception(
+            "Could not update help message for user %s in chat %s",
+            event.user_id,
+            event.peer_id,
+        )
+        await event.show_snackbar("Не удалось обновить список команд.")
 
 
 async def _assign_role(message: Message, args: list[str], role: int, actor_id: int, chat_id: int):

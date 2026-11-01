@@ -149,25 +149,27 @@ def format_chat_info(chat_data: dict, member_count: int = 0) -> str:
     )
 
 
-def format_help_text(user_role: int) -> str:
+def format_help_text(user_role: int, selected_level: Optional[int] = None) -> str:
     from bot.utils.permissions import COMMAND_DESCRIPTIONS, COMMAND_PERMISSIONS
 
-    level = max(0, min(6, int(user_role)))
+    max_level = max(0, min(6, int(user_role)))
+    level = max_level if selected_level is None else max(
+        0, min(max_level, int(selected_level))
+    )
     role_name = get_role_name(level)
     lines = [
         f"📋 Команды для уровня {level} — {role_name}",
-        "Доступны команды этого уровня и всех уровней ниже:",
+        "Команды, доступные на этом уровне:",
     ]
     for name, required in sorted(COMMAND_PERMISSIONS.items()):
-        if required <= level:
+        if required == level:
             description = COMMAND_DESCRIPTIONS.get(name, "Описание пока не добавлено.")
             lines.append(f"/{name} — {description}")
     return "\n".join(lines)
 
 
 def format_help_level_text(user_role: int, selected_level: int) -> str:
-    level = max(0, min(int(user_role), int(selected_level)))
-    return format_help_text(level)
+    return format_help_text(user_role, selected_level)
 
 
 def format_staff_list(members: list[dict]) -> str:

@@ -77,12 +77,16 @@ class VKAPIWrapper:
             return False
 
     async def clear_recent_messages(
-        self, chat_id: int, amount: int, exclude_cmid: Optional[int] = None
+        self,
+        chat_id: int,
+        amount: int,
+        exclude_cmid: Optional[int] = None,
+        protected_user_ids: Optional[set[int]] = None,
     ) -> bool:
         try:
             history = await self.api.messages.get_history(
                 peer_id=chat_id,
-                count=amount + (1 if exclude_cmid else 0),
+                count=min(amount + (1 if exclude_cmid else 0) + len(protected_user_ids or set()), 200),
             )
             items = getattr(history, "items", None) or []
             ids = [
@@ -90,7 +94,20 @@ class VKAPIWrapper:
                 for item in items
                 if getattr(item, "conversation_message_id", None) is not None
                 and item.conversation_message_id != exclude_cmid
+                and getattr(item, "from_id", None) not in (protected_user_ids or set())
             ][:amount]
+            skipped = sum(
+                1
+                for item in items
+                if getattr(item, "conversation_message_id", None) != exclude_cmid
+                and getattr(item, "from_id", None) in (protected_user_ids or set())
+            )
+            if skipped:
+                logger.info(
+                    "Skipped %s messages from higher-role users while clearing chat %s",
+                    skipped,
+                    chat_id,
+                )
             return await self.delete_message(chat_id, ids) if ids else False
         except Exception as exc:
             error_code = getattr(exc, "code", getattr(exc, "error_code", "unknown"))
