@@ -299,7 +299,7 @@ async def command_router(message: Message):
             selected_level = (
                 int(args[0])
                 if args and args[0].isdigit()
-                else 0
+                else user_role
             )
             text = format_help_level_text(user_role, selected_level)
             await message.answer(
@@ -490,20 +490,12 @@ async def command_router(message: Message):
                 if vk_api
                 else {}
             )
-            employees = [entry for entry in staff if 1 <= entry["role"] < 2]
-            administrators = [entry for entry in staff if entry["role"] >= 2]
             lines = ["Сотрудники отдела:"]
-            lines.extend(
-                f"• [id{entry['user_id']}|"
-                f"{entry.get('nickname') or names.get(entry['user_id']) or entry['user_id']}]"
-                for entry in employees
-            )
-            lines.append("\nАдминистраторы чата:")
             lines.extend(
                 f"• [id{entry['user_id']}|"
                 f"{entry.get('nickname') or names.get(entry['user_id']) or entry['user_id']}] "
                 f"— {get_role_name(entry['role'])}"
-                for entry in administrators
+                for entry in staff
             )
             await message.answer("\n".join(lines))
             return
@@ -977,11 +969,17 @@ async def command_router(message: Message):
         if command == "zov":
             if not vk_api:
                 raise RuntimeError("VK API не инициализирован.")
-            text_to_send = await vk_api.mention_all(chat_id, config.max_mentions_per_zov)
-            if not text_to_send:
+            mentions = await vk_api.mention_all(chat_id, config.max_mentions_per_zov)
+            if not mentions:
                 await message.answer("Не удалось получить список участников.")
                 return
-            await message.answer(f"📢 Внимание!\n{text_to_send}")
+            names = await vk_api.get_member_names(chat_id, [user_id])
+            actor = format_user_mention(
+                user_id, names.get(user_id) or f"ID {user_id}"
+            )
+            await message.answer(
+                f"📢 {actor} упомянул участников текущей беседы.\n{mentions}"
+            )
             return
         if command in {"snick", "rnick"}:
             target_id, rest = _target_from_args(message, args)
@@ -1323,6 +1321,10 @@ async def command_router(message: Message):
             if not group_id or not vk_api:
                 await message.answer("Нужна привязанная группа и доступ к VK API.")
                 return
+            names = await vk_api.get_member_names(chat_id, [user_id])
+            actor = format_user_mention(
+                user_id, names.get(user_id) or f"ID {user_id}"
+            )
             sent = 0
             failures = 0
             bound_chats = await _active_bound_chats(group_id)
@@ -1331,13 +1333,16 @@ async def command_router(message: Message):
                 if not mentions:
                     failures += 1
                     continue
-                if not await vk_api.send_message(bound_chat, f"📢 Внимание!\n{mentions}"):
+                if not await vk_api.send_message(
+                    bound_chat,
+                    f"📢 {actor} упомянул участников во всех чатах отдела.\n{mentions}",
+                ):
                     failures += 1
                 else:
                     sent += 1
             await message.answer(
-                f"Упоминание отправлено во все активные чаты отдела: {sent}. "
-                f"Ошибок: {failures}."
+                f"✅ {actor} упомянул участников во всех чатах отдела. "
+                f"Успешно: {sent}, ошибок: {failures}."
             )
             return
         if command == "pin":

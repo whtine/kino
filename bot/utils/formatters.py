@@ -159,10 +159,10 @@ def format_help_text(user_role: int, selected_level: Optional[int] = None) -> st
     role_name = get_role_name(level)
     lines = [
         f"📋 Команды для уровня {level} — {role_name}",
-        "Команды, доступные на этом уровне:",
+        "Команды, доступные этому уровню:",
     ]
     for name, required in sorted(COMMAND_PERMISSIONS.items()):
-        if required == level:
+        if required <= level:
             description = COMMAND_DESCRIPTIONS.get(name, "Описание пока не добавлено.")
             lines.append(f"/{name} — {description}")
     return "\n".join(lines)
