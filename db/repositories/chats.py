@@ -64,16 +64,23 @@ class ChatsRepository:
             "chat_id": chat_id,
             "group_id": group_id
         }).select("chat_id").execute()
-        # Update chat's group_id
+        if not binding.data:
+            return False
         updated = await self.update(chat_id, {"group_id": group_id})
-        return bool(binding.data) and updated
+        if not updated:
+            (
+                sb.table("chat_group_bindings").delete()
+                .eq("chat_id", chat_id).eq("group_id", group_id).execute()
+            )
+            return False
+        sb.table("chat_group_bindings").delete().eq("chat_id", chat_id).neq(
+            "group_id", group_id
+        ).execute()
+        return True
 
     async def unbind_group(self, chat_id: int) -> bool:
         """Unbind chat from group."""
         sb = get_supabase()
         updated = await self.update(chat_id, {"group_id": None})
-        deleted = (
-            sb.table("chat_group_bindings").delete().eq("chat_id", chat_id)
-            .select("chat_id").execute()
-        )
-        return updated and bool(deleted.data)
+        sb.table("chat_group_bindings").delete().eq("chat_id", chat_id).execute()
+        return updated

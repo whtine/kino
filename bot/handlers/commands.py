@@ -848,9 +848,36 @@ async def command_router(message: Message):
             if not group or group["owner_id"] != user_id:
                 await message.answer("Группа не найдена или вы не её владелец.")
                 return
+            current_group_id = await _bound_group(chat_id)
+            if current_group_id and current_group_id != group_id:
+                current_group = await groups.get(current_group_id)
+                if not current_group or current_group["owner_id"] != user_id:
+                    await message.answer(
+                        "⛔ Эта беседа уже связана с чужой группой. "
+                        "Её владелец должен сначала выполнить /unbind."
+                    )
+                    return
             if not await chats.bind_group(chat_id, group_id):
                 raise RuntimeError("Не удалось привязать беседу.")
             await message.answer(f"✅ Беседа привязана к группе «{group['name']}».")
+            return
+        if command == "unbind":
+            group_id = await _bound_group(chat_id)
+            if not group_id:
+                await message.answer("Эта беседа не привязана к группе.")
+                return
+            group = await groups.get(group_id)
+            if not group or group["owner_id"] != user_id:
+                await message.answer(
+                    "⛔ Отвязать беседу может только владелец связанной группы."
+                )
+                return
+            if not await chats.unbind_group(chat_id):
+                raise RuntimeError("Не удалось отвязать беседу от группы.")
+            await message.answer(
+                f"✅ Беседа отвязана от группы «{group['name']}». "
+                "Синхронизация групповых команд для неё отключена."
+            )
             return
         if command == "async":
             group_id = await _bound_group(chat_id)

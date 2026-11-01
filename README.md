@@ -69,7 +69,7 @@ python main.py
 
 See `bot/utils/permissions.py` (`COMMAND_PERMISSIONS`) for the full command → role mapping.
 Mute durations use `с`, `м`, `ч`, or `д` (for example, `/mute 123 30м флуд`).
-`/rep` allows one vote for each other user per chat. `/async timeout on|off` applies silence mode to active chats in the bound group.
+`/rep` allows one vote for each other user per chat. Cross-chat operations only target conversations explicitly linked to the same group with `/bind`; `/async timeout on|off` applies silence mode to those bound chats. The group owner can run `/unbind` to stop syncing a conversation.
 In an inactive chat, only `/start` and `/activate` (or `*`) are accepted. `/start` displays the activation button; inviting new members triggers a welcome message with `/info`.
 `/help` displays commands with descriptions; inline role buttons show only commands assigned to the selected level.
 `/info` lists the chat's official links. Role 5+ can add links with `/info add Label https://example.com` and remove them with `/info remove N`.

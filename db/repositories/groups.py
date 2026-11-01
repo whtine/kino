@@ -42,9 +42,9 @@ class GroupsRepository:
         return bool(result.data)
 
     async def get_bound_chats(self, group_id: int) -> List[int]:
-        """Get chat_ids bound to this group."""
+        """Get only chats whose current group_id explicitly matches this group."""
         sb = get_supabase()
-        result = sb.table("chat_group_bindings").select("chat_id").eq("group_id", group_id).execute()
+        result = sb.table("chats").select("chat_id").eq("group_id", group_id).execute()
         return [r["chat_id"] for r in result.data or []]
 
     async def bind_chat(self, chat_id: int, group_id: int) -> bool:

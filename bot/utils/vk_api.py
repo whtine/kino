@@ -219,10 +219,23 @@ class VKAPIWrapper:
             logger.exception("Could not retrieve members of chat %s", chat_id)
             return False
         for member in members:
-            member_id = member.get("member_id") if isinstance(member, dict) else member.member_id
-            is_admin = member.get("is_admin") if isinstance(member, dict) else member.is_admin
+            member_id = (
+                member.get("member_id")
+                if isinstance(member, dict)
+                else getattr(member, "member_id", None)
+            )
+            is_admin = (
+                member.get("is_admin")
+                if isinstance(member, dict)
+                else getattr(member, "is_admin", False)
+            )
+            is_owner = (
+                member.get("is_owner")
+                if isinstance(member, dict)
+                else getattr(member, "is_owner", False)
+            )
             if member_id == user_id:
-                return bool(is_admin)
+                return bool(is_admin or is_owner)
         return False
 
     async def get_member_names(self, chat_id: int, user_ids: List[int]) -> Dict[int, str]:
