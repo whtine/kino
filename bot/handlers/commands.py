@@ -158,6 +158,11 @@ async def _can_moderate(
     return True
 
 
+async def _named_mention(chat_id: int, user_id: int) -> str:
+    names = await vk_api.get_member_names(chat_id, [user_id]) if vk_api else {}
+    return format_user_mention(user_id, names.get(user_id) or f"ID {user_id}")
+
+
 async def _add_log(
     chat_id: int,
     target_id: int,
@@ -435,7 +440,14 @@ async def command_router(message: Message):
             names = await vk_api.get_member_names(chat_id, [row["user_id"] for row in rows]) if vk_api else {}
             output = ["🏆 Топ участников по сообщениям:"]
             output.extend(
-                format_stats_entry(row, index, format_user_mention(row["user_id"], names.get(row["user_id"])))
+                format_stats_entry(
+                    row,
+                    index,
+                    format_user_mention(
+                        row["user_id"],
+                        names.get(row["user_id"]) or f"ID {row['user_id']}",
+                    ),
+                )
                 for index, row in enumerate(rows, 1)
             )
             await message.answer("\n".join(output) if rows else "Пока нет статистики.")
@@ -469,7 +481,8 @@ async def command_router(message: Message):
                 "chat_id", chat_id
             ).eq("target_id", target_id).execute()
             count = len(votes.data or [])
-            await message.answer(f"⭐ Репутация {format_user_mention(target_id)}: {count}")
+            target = await _named_mention(chat_id, target_id)
+            await message.answer(f"⭐ Репутация {target}: {count}")
             return
         if command in {"staff", "olist"}:
             staff = await members.get_staff(chat_id)
@@ -505,8 +518,9 @@ async def command_router(message: Message):
                 await message.answer("Ответьте на сообщение или укажите ID пользователя.")
                 return
             entry = await members.get_or_create(chat_id, target_id)
+            target = await _named_mention(chat_id, target_id)
             await message.answer(
-                f"{format_user_mention(target_id)}\n"
+                f"{target}\n"
                 f"Роль: {get_role_name(entry['role'])} ({entry['role']})\n"
                 f"Предупреждения: {entry.get('warns', 0)}"
             )
@@ -516,8 +530,9 @@ async def command_router(message: Message):
             if not target_id:
                 target_id = user_id
             entry = await members.get_or_create(chat_id, target_id)
+            target = await _named_mention(chat_id, target_id)
             await message.answer(
-                f"⚠️ У {format_user_mention(target_id)} "
+                f"⚠️ У {target} "
                 f"{entry.get('warns', 0)} предупреждений "
                 f"({entry.get('warns', 0)}/3)."
             )
@@ -561,8 +576,12 @@ async def command_router(message: Message):
                 if vk_api
                 else {}
             )
-            moderator = format_user_mention(user_id, names.get(user_id))
-            target = format_user_mention(target_id, names.get(target_id))
+            moderator = format_user_mention(
+                user_id, names.get(user_id) or f"ID {user_id}"
+            )
+            target = format_user_mention(
+                target_id, names.get(target_id) or f"ID {target_id}"
+            )
             await message.answer(
                 f"⚠️ {moderator} выдал {_count_word(warn_count)} "
                 f"{'выговор' if warn_count == 1 else 'выговора'} сотруднику {target}.\n"
@@ -602,8 +621,8 @@ async def command_router(message: Message):
                 else {}
             )
             await message.answer(
-                f"👢 {format_user_mention(user_id, names.get(user_id))} исключил "
-                f"{format_user_mention(target_id, names.get(target_id))} "
+                f"👢 {format_user_mention(user_id, names.get(user_id) or f'ID {user_id}')} исключил "
+                f"{format_user_mention(target_id, names.get(target_id) or f'ID {target_id}')} "
                 f"из бесед отдела: {kicked}. Ошибок: {failures}. "
                 f"Причина: {reason or 'не указана'}."
             )
@@ -656,8 +675,12 @@ async def command_router(message: Message):
                 if vk_api
                 else {}
             )
-            moderator = format_user_mention(user_id, names.get(user_id))
-            target = format_user_mention(target_id, names.get(target_id))
+            moderator = format_user_mention(
+                user_id, names.get(user_id) or f"ID {user_id}"
+            )
+            target = format_user_mention(
+                target_id, names.get(target_id) or f"ID {target_id}"
+            )
             action_text = {
                 "ban": "заблокировал в чате",
                 "kick": "исключил",
@@ -711,6 +734,7 @@ async def command_router(message: Message):
                 return
             reason = " ".join(rest).strip() or None
             await _add_log(chat_id, target_id, user_id, "unban", reason)
+            target = await _named_mention(chat_id, target_id)
             if not vk_api or not await vk_api.add_chat_user(chat_id, target_id):
                 await message.answer(
                     "✅ Блокировка снята, но добавить пользователя обратно не удалось.\n"
@@ -718,7 +742,7 @@ async def command_router(message: Message):
                 )
                 return
             await message.answer(
-                f"✅ Блокировка в чате с {format_user_mention(target_id)} снята.\n"
+                f"✅ Блокировка в чате с {target} снята.\n"
                 f"Причина: {reason or 'не указана'}."
             )
             return
@@ -747,8 +771,12 @@ async def command_router(message: Message):
                 if vk_api
                 else {}
             )
-            moderator = format_user_mention(user_id, names.get(user_id))
-            target = format_user_mention(target_id, names.get(target_id))
+            moderator = format_user_mention(
+                user_id, names.get(user_id) or f"ID {user_id}"
+            )
+            target = format_user_mention(
+                target_id, names.get(target_id) or f"ID {target_id}"
+            )
             await message.answer(
                 f"🔇 {moderator} выдал затычку в чате пользователю {target}.\n"
                 f"Причина: {reason or 'не указана'}\n"
@@ -767,8 +795,9 @@ async def command_router(message: Message):
                 raise RuntimeError("Не удалось снять мут.")
             reason = " ".join(rest).strip() or None
             await _add_log(chat_id, target_id, user_id, "unmute", reason)
+            target = await _named_mention(chat_id, target_id)
             await message.answer(
-                f"🔊 Затычка в чате с {format_user_mention(target_id)} снята.\n"
+                f"🔊 Затычка в чате с {target} снята.\n"
                 f"Причина: {reason or 'не указана'}."
             )
             return
@@ -793,10 +822,12 @@ async def command_router(message: Message):
             count = await members.remove_warn(chat_id, target_id, amount)
             for _ in range(amount):
                 await _add_log(chat_id, target_id, user_id, "unwarn")
+            actor = await _named_mention(chat_id, user_id)
+            target = await _named_mention(chat_id, target_id)
             await message.answer(
-                f"✅ {format_user_mention(user_id)} снял {_count_word(amount)} "
+                f"✅ {actor} снял {_count_word(amount)} "
                 f"{'выговор' if amount == 1 else 'выговора'} с "
-                f"{format_user_mention(target_id)}.\nИтог: {count}/3."
+                f"{target}.\nИтог: {count}/3."
             )
             return
         if command == "clear":
@@ -864,8 +895,9 @@ async def command_router(message: Message):
                 if not vk_api or not await vk_api.delete_message(chat_id, [target_cmid]):
                     await message.answer("❌ Не удалось удалить указанное сообщение.")
                     return
+                target = await _named_mention(chat_id, target_id)
                 response = await message.answer(
-                    f"✅ Сообщение пользователя {format_user_mention(target_id)} удалено."
+                    f"✅ Сообщение пользователя {target} удалено."
                 )
                 _schedule_clear_message_cleanup(
                     chat_id, message.conversation_message_id, response
@@ -1047,7 +1079,7 @@ async def command_router(message: Message):
             names = await vk_api.get_member_names(chat_id, [target_id]) if vk_api else {}
             await message.answer(
                 f"🏷 Текущий ник пользователя "
-                f"{format_user_mention(target_id, names.get(target_id))}: "
+                f"{format_user_mention(target_id, names.get(target_id) or f'ID {target_id}')}: "
                 f"{nickname or 'не установлен'}."
             )
             return
@@ -1244,9 +1276,10 @@ async def command_router(message: Message):
                 "group_owner_change",
                 f"Отдел {group['id']}: владелец {user_id} → {target_id}",
             )
+            target = await _named_mention(chat_id, target_id)
             await message.answer(
                 f"✅ Владение отделом «{group['name']}» передано "
-                f"{format_user_mention(target_id)}."
+                f"{target}."
             )
             return
         if command == "gban":
@@ -1285,6 +1318,8 @@ async def command_router(message: Message):
                     "Снята при глобальной блокировке.",
                 )
             await _add_log(chat_id, target_id, user_id, "gban", reason, duration)
+            target = await _named_mention(chat_id, target_id)
+            actor = await _named_mention(chat_id, user_id)
             status = f" Не удалось исключить из бесед: {failures}." if failures else ""
             duration_text = (
                 f" на {duration.days} дней" if duration and duration.days else
@@ -1292,7 +1327,7 @@ async def command_router(message: Message):
                 " навсегда"
             )
             await message.answer(
-                f"🌐 {format_user_mention(target_id)} заблокирован во всех чатах "
+                f"🌐 {actor} заблокировал пользователя {target} во всех чатах "
                 f"отдела{duration_text}. Причина: {reason or 'не указана'}.{status}"
             )
             return
@@ -1308,9 +1343,11 @@ async def command_router(message: Message):
             if removed:
                 reason = " ".join(rest).strip() or None
                 await _add_log(chat_id, target_id, user_id, "gunban", reason)
+                target = await _named_mention(chat_id, target_id)
+                actor = await _named_mention(chat_id, user_id)
                 await message.answer(
-                    f"✅ Глобальная блокировка с "
-                    f"{format_user_mention(target_id)} снята во всех чатах отдела.\n"
+                    f"✅ {actor} снял глобальную блокировку с "
+                    f"{target} во всех чатах отдела.\n"
                     f"Причина: {reason or 'не указана'}."
                 )
             else:
@@ -1692,8 +1729,9 @@ async def _assign_role(message: Message, args: list[str], role: int, actor_id: i
     actor_role = await members.get_role(chat_id, actor_id)
     target_role = await members.get_role(chat_id, target_id)
     if target_role == role:
+        target = await _named_mention(chat_id, target_id)
         await message.answer(
-            f"{format_user_mention(target_id)} уже занимает должность "
+            f"{target} уже занимает должность "
             f"{get_role_name(role).lower()}."
         )
         return

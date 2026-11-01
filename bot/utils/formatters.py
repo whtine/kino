@@ -75,7 +75,7 @@ def format_ban(ban: Optional[dict]) -> str:
 
 
 def format_user_mention(user_id: int, name: Optional[str] = None) -> str:
-    return f"[id{user_id}|{name or 'пользователь'}]"
+    return f"[id{user_id}|{name or f'ID {user_id}'}]"
 
 
 def format_user_link(user_id: int) -> str:

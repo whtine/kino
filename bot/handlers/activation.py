@@ -66,9 +66,11 @@ async def _activate_chat(chat_id: int, user_id: int) -> tuple[bool, str]:
         logger.exception("Could not activate chat %s", chat_id)
         return False, "❌ Не удалось активировать беседу. Попробуйте позже."
 
+    names = await vk_api.get_member_names(chat_id, [user_id]) if vk_api else {}
     return True, (
-        f"✅ Бот активирован!\nАдминистратор {format_user_mention(user_id)} "
-        "получил роль 6 для первоначальной настройки.\nНапишите /help."
+        f"✅ Бот активирован!\nАдминистратор "
+        f"{format_user_mention(user_id, names.get(user_id) or f'ID {user_id}')}"
+        " получил роль 6 для первоначальной настройки.\nНапишите /help."
     )
 
 
@@ -122,7 +124,7 @@ async def welcome_new_chat_member(message: Message):
         return
 
     names = await vk_api.get_member_names(message.peer_id, [member_id]) if vk_api else {}
-    name = names.get(member_id) or "Участник"
+    name = names.get(member_id) or f"ID {member_id}"
     await message.answer(
         f"{name}, добро пожаловать в беседу!\n"
         "Не забудь прочитать закреплённое сообщение!\n"
