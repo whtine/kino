@@ -56,6 +56,25 @@ class MembersRepository:
         await self.get_or_create(chat_id, user_id)
         return await self.update(chat_id, user_id, {"role": role})
 
+    async def clear_role(self, chat_id: int, user_id: int) -> Optional[int]:
+        """Clear a member role and return its previous value."""
+        member = await self.get(chat_id, user_id)
+        previous_role = int(member.get("role", 0)) if member else 0
+        if previous_role <= 0:
+            return None
+
+        sb = get_supabase()
+        result = await asyncio.to_thread(
+            sb.table(self.table)
+            .update({"role": 0})
+            .eq("chat_id", chat_id)
+            .eq("user_id", user_id)
+            .eq("role", previous_role)
+            .select("user_id")
+            .execute
+        )
+        return previous_role if result.data else None
+
     async def get_role(self, chat_id: int, user_id: int) -> int:
         """Get member role, default 0."""
         member = await self.get(chat_id, user_id)

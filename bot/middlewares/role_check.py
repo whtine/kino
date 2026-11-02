@@ -12,10 +12,12 @@ from bot.utils.permissions import (
     get_role_name,
 )
 from config import config
+from db.repositories.command_aliases import CommandAliasesRepository
 from db.repositories.members import MembersRepository
 
 logger = logging.getLogger(__name__)
 members_repo = MembersRepository()
+command_aliases = CommandAliasesRepository()
 
 
 def _command_name(message: Message) -> str:
@@ -36,6 +38,13 @@ class RoleCheckMiddleware(BaseMiddleware[Message]):
 
         command = _command_name(message)
         activation_command = str(config.activation_command or "*").strip().lstrip("/").split("@", 1)[0].lower()
+        if command not in COMMAND_PERMISSIONS:
+            custom_command = await command_aliases.get_command(
+                message.from_id, command
+            )
+            if not custom_command:
+                return
+            command = custom_command
         if command in {"activate", activation_command} or command in {"start", "help"}:
             return
         if command not in COMMAND_PERMISSIONS:
@@ -70,6 +79,11 @@ class OwnerCheckMiddleware(BaseMiddleware[Message]):
         if message.peer_id < 2_000_000_000 or not text.startswith("/"):
             return
         command = _command_name(message)
+        if command not in self.OWNER_COMMANDS:
+            command = (
+                await command_aliases.get_command(message.from_id, command)
+                or command
+            )
         if command not in self.OWNER_COMMANDS:
             return
         from bot.utils.vk_api import vk_api

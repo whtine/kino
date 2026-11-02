@@ -20,7 +20,12 @@ from bot.utils.formatters import (
     format_user_info,
     format_user_mention,
 )
-from bot.utils.permissions import MAX_HELP_ROLE, get_required_role, get_role_name
+from bot.utils.permissions import (
+    COMMAND_PERMISSIONS,
+    MAX_HELP_ROLE,
+    get_required_role,
+    get_role_name,
+)
 from bot.keyboards import (
     get_help_keyboard,
     get_nick_list_keyboard,
@@ -29,6 +34,7 @@ from bot.keyboards import (
 from bot.utils.vk_api import vk_api
 from config import config
 from db.repositories.chats import ChatsRepository
+from db.repositories.command_aliases import CommandAliasesRepository
 from db.repositories.global_bans import GlobalBansRepository
 from db.repositories.groups import GroupsRepository
 from db.repositories.members import MembersRepository
@@ -44,6 +50,7 @@ punishments = PunishmentsRepository()
 stats = StatsRepository()
 groups = GroupsRepository()
 global_data = GlobalBansRepository()
+command_aliases = CommandAliasesRepository()
 
 TARGET_PATTERN = re.compile(r"^(?:\[id|@id)(\d+)(?:\||\])?")
 _SEEN_MESSAGE_TTL_SECONDS = 120
@@ -60,6 +67,12 @@ _COMMAND_ALIASES = {
     "otdel": "creategroup",
     "delotdel": "delgroup",
     "myotdel": "mygroups",
+}
+_RESERVED_COMMAND_ALIASES = {
+    "activate",
+    "deactivate",
+    "mycmd",
+    "start",
 }
 
 
@@ -184,11 +197,9 @@ async def _add_log(
 async def _revoke_role_after_removal(
     chat_id: int, target_id: int, actor_id: int, reason: str
 ) -> None:
-    previous_role = await members.get_role(chat_id, target_id)
-    if previous_role == 0:
+    previous_role = await members.clear_role(chat_id, target_id)
+    if previous_role is None:
         return
-    if not await members.set_role(chat_id, target_id, 0):
-        raise RuntimeError(f"Не удалось снять роль пользователя {target_id}.")
     await _add_log(
         chat_id,
         target_id,
@@ -288,6 +299,11 @@ async def command_router(message: Message):
     else:
         return
     invoked_command = command
+    if command not in COMMAND_PERMISSIONS:
+        command = (
+            await command_aliases.get_command(message.from_id, command)
+            or command
+        )
     command = _COMMAND_ALIASES.get(command, command)
     activation_command = str(config.activation_command or "/activate").strip()
     activation_command = activation_command.lstrip("/").split("@", 1)[0].lower()
@@ -315,6 +331,93 @@ async def command_router(message: Message):
             await message.answer(
                 text,
                 keyboard=get_help_keyboard(user_role, selected_level),
+            )
+            return
+        if command == "mycmd":
+            action = args[0].lower() if args else "list"
+            if action == "add":
+                if len(args) != 3:
+                    await message.answer(
+                        "Использование: /mycmd add команда псевдоним\n"
+                        "Пример: /mycmd add stats stata"
+                    )
+                    return
+                target_command = args[1].lstrip("/").lower()
+                alias = args[2].lstrip("/").lower()
+                canonical_command = _COMMAND_ALIASES.get(
+                    target_command, target_command
+                )
+                if (
+                    canonical_command not in COMMAND_PERMISSIONS
+                    or canonical_command in {
+                        "activate",
+                        "deactivate",
+                        "mycmd",
+                        "start",
+                    }
+                ):
+                    await message.answer(
+                        "Такой команды нет. Посмотрите список доступных команд: /help"
+                    )
+                    return
+                if (
+                    not re.fullmatch(r"[a-z][a-z0-9_]{0,19}", alias)
+                    or alias in COMMAND_PERMISSIONS
+                    or alias in _COMMAND_ALIASES
+                    or alias in _RESERVED_COMMAND_ALIASES
+                ):
+                    await message.answer(
+                        "Псевдоним должен быть новым именем из латинских букв, "
+                        "цифр и _, длиной до 20 символов."
+                    )
+                    return
+                aliases = await command_aliases.get_all(user_id)
+                if not any(item["alias"] == alias for item in aliases) and len(aliases) >= 20:
+                    await message.answer(
+                        "Можно создать не более 20 личных псевдонимов."
+                    )
+                    return
+                if not await command_aliases.set(
+                    user_id, alias, canonical_command
+                ):
+                    raise RuntimeError("Не удалось сохранить псевдоним команды.")
+                await message.answer(
+                    f"✅ /{alias} теперь вызывает /{canonical_command}. "
+                    "Проверка прав исходной команды сохраняется."
+                )
+                return
+            if action in {"remove", "del", "удалить"}:
+                if len(args) != 2:
+                    await message.answer(
+                        "Использование: /mycmd remove псевдоним"
+                    )
+                    return
+                alias = args[1].lstrip("/").lower()
+                if not await command_aliases.delete(user_id, alias):
+                    await message.answer("Такой личный псевдоним не найден.")
+                    return
+                await message.answer(f"✅ Псевдоним /{alias} удалён.")
+                return
+            if action in {"list", "список"}:
+                aliases = await command_aliases.get_all(user_id)
+                if not aliases:
+                    await message.answer(
+                        "Личных псевдонимов пока нет.\n"
+                        "Создать: /mycmd add stats stata"
+                    )
+                    return
+                lines = ["📋 Ваши псевдонимы команд:"]
+                lines.extend(
+                    f"• /{item['alias']} → /{item['command']}"
+                    for item in aliases
+                )
+                await message.answer("\n".join(lines))
+                return
+            await message.answer(
+                "Команды настройки:\n"
+                "• /mycmd add stats stata — создать псевдоним\n"
+                "• /mycmd remove stata — удалить псевдоним\n"
+                "• /mycmd list — показать свои псевдонимы"
             )
             return
         if command == "id":

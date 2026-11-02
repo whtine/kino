@@ -132,6 +132,44 @@ async def welcome_new_chat_member(message: Message):
     )
 
 
+@bp.on.chat_message(ChatActionRule(["chat_kick_user"]))
+async def clear_removed_member_role(message: Message):
+    action = getattr(message, "action", None)
+    action_type = getattr(action, "type", None)
+    action_type = getattr(action_type, "value", action_type)
+    member_id = getattr(action, "member_id", None)
+    if (
+        action_type != "chat_kick_user"
+        or message.peer_id < 2_000_000_000
+        or not isinstance(member_id, int)
+        or member_id <= 0
+    ):
+        return
+
+    previous_role = await members_repo.clear_role(message.peer_id, member_id)
+    if previous_role is None:
+        return
+
+    actor_id = getattr(message, "from_id", None)
+    if not isinstance(actor_id, int) or actor_id == 0:
+        actor_id = member_id
+    record = await punishments_repo.add(
+        message.peer_id,
+        member_id,
+        actor_id,
+        "role_change",
+        f"Роль снята при исключении из беседы: "
+        f"{get_role_name(previous_role)} ({previous_role}) → "
+        f"{get_role_name(0)} (0)",
+    )
+    if not record:
+        logger.error(
+            "Could not log role removal for user %s in chat %s",
+            member_id,
+            message.peer_id,
+        )
+
+
 @bp.on.raw_event("message_event", MessageEvent, blocking=False)
 async def activation_button(event: MessageEvent):
     if not isinstance(event.payload, dict) or event.payload.get("cmd") != "activate_chat":

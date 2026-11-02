@@ -18,6 +18,7 @@ COMMAND_PERMISSIONS = {
     "help": 0,
     "chatid": 0,
     "chat": 0,
+    "mycmd": 0,
     
     # Level 1 - Модератор фильмов
     "kick": 1,
@@ -91,7 +92,10 @@ COMMAND_PERMISSIONS = {
 
 # /help lists the commands introduced at each level of the current hierarchy.
 HELP_COMMANDS_BY_ROLE = {
-    0: ("help", "id", "info", "rep", "stats", "top", "chat", "chatid"),
+    0: (
+        "help", "id", "info", "mycmd", "rep", "stats", "top", "chat",
+        "chatid",
+    ),
     1: (
         "clear", "del", "getnick", "getwarn", "kick", "mute", "nlist",
         "olist", "rnick", "snick", "staff", "unwarn", "warn", "check",
@@ -121,6 +125,7 @@ COMMAND_DESCRIPTIONS = {
     "info": "Показать официальные ссылки беседы; настройка доступна с роли 4.",
     "rep": "Отдать пользователю один балл репутации.",
     "help": "Показать команды и выбрать уровень доступа.",
+    "mycmd": "Настроить личный псевдоним команды: /mycmd add stats stata.",
     "start": "Показать команды и выбрать уровень доступа.",
     "kick": "Исключить пользователя из беседы.",
     "mute": "Выдать мут на 15–450 минут: /mute @username 30 минут причина.",

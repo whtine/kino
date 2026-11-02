@@ -50,6 +50,7 @@ db/migrations/001_init.sql
 db/migrations/002_feature_updates.sql
 db/migrations/003_ban_expirations.sql
 db/migrations/004_role_cap_4.sql
+db/migrations/005_personal_command_aliases.sql
 ```
 
 4. Start the bot:
@@ -75,4 +76,5 @@ Mute durations accept Russian units (for example, `/mute 123 30м флуд` or `
 `/rep` allows one vote for each other user per chat. Cross-chat operations only target conversations explicitly linked to the same department with `/bind`; `/sban`, `/sunban`, `/ssnick`, `/srnick`, `/skick`, and `/szov` act on the bound chats. `/async timeout on|off` applies silence mode to those chats. Department aliases are `/otdel`, `/delotdel`, and `/myotdel`.
 In an inactive chat, only `/start` and `/activate` (or `*`) are accepted. `/start` displays the activation button; inviting new members triggers a welcome message with `/info`.
 `/help` displays commands with descriptions; inline role buttons show only commands assigned to the selected level. `/getban [id]` (level 2+) or a reply checks whether one user is actively banned in the current chat and, when it belongs to a group, in synchronized chats.
+Users can create up to 20 personal command aliases with `/mycmd add stats stata`, list them with `/mycmd list`, and remove one with `/mycmd remove stata`. Aliases apply only to their creator and retain the original command's role checks. Apply migration `db/migrations/005_personal_command_aliases.sql` after the previous migrations.
 `/info` lists the chat's official links. Role 4 can add links with `/info add Label https://example.com` and remove them with `/info remove N`.
