@@ -79,7 +79,11 @@ def _help_level_from_payload(message: Message) -> Optional[int]:
     if not isinstance(payload, dict) or payload.get("cmd") != "help_level":
         return None
     level = payload.get("level")
-    if isinstance(level, bool) or not isinstance(level, int) or not 0 <= level <= 6:
+    if (
+        isinstance(level, bool)
+        or not isinstance(level, int)
+        or not 0 <= level <= MAX_HELP_ROLE
+    ):
         return None
     return level
 
@@ -376,9 +380,9 @@ async def command_router(message: Message):
             action = args[0].lower() if args else ""
             if action in {"add", "remove", "удалить", "добавить"}:
                 role = await members.get_role(chat_id, user_id)
-                if role < 5:
+                if role < 4:
                     await message.answer(
-                        "⛔ Настраивать официальные ссылки могут пользователи с ролью 5 и выше."
+                        "⛔ Настраивать официальные ссылки могут пользователи с ролью 4."
                     )
                     return
 
@@ -425,7 +429,7 @@ async def command_router(message: Message):
 
             if not links:
                 await message.answer(
-                    "Официальные ссылки ещё не добавлены. Пользователь с ролью 5+ "
+                    "Официальные ссылки ещё не добавлены. Пользователь с ролью 4 "
                     "может добавить ссылку командой /info add Название https://example.com."
                 )
                 return

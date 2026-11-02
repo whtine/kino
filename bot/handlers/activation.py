@@ -49,14 +49,14 @@ async def _activate_chat(chat_id: int, user_id: int) -> tuple[bool, str]:
         if details and details.get("title"):
             if not await chats_repo.update(chat_id, {"title": details["title"]}):
                 raise RuntimeError("Не удалось сохранить название беседы.")
-        if not await members_repo.set_role(chat_id, user_id, 6):
+        if not await members_repo.set_role(chat_id, user_id, 4):
             raise RuntimeError("Не удалось назначить роль владельца.")
         role_log = await punishments_repo.add(
             chat_id,
             user_id,
             user_id,
             "role_change",
-            f"Роль: назначено → {get_role_name(6)} (6)",
+            f"Роль: назначено → {get_role_name(4)} (4)",
         )
         if not role_log:
             raise RuntimeError("Не удалось сохранить дату назначения роли.")
@@ -70,7 +70,7 @@ async def _activate_chat(chat_id: int, user_id: int) -> tuple[bool, str]:
     return True, (
         f"✅ Бот активирован!\nАдминистратор "
         f"{format_user_mention(user_id, names.get(user_id) or f'ID {user_id}')}"
-        " получил роль 6 для первоначальной настройки.\nНапишите /help."
+        " получил роль 4 для первоначальной настройки.\nНапишите /help."
     )
 
 
@@ -177,8 +177,8 @@ async def deactivate_chat(message: Message):
     if chat_id < 2_000_000_000:
         await message.answer("❌ Деактивация доступна только в беседах.")
         return
-    if await members_repo.get_role(chat_id, message.from_id) < 6:
-        await message.answer("⛔ Требуется роль 6.")
+    if await members_repo.get_role(chat_id, message.from_id) < 4:
+        await message.answer("⛔ Требуется роль 4.")
         return
     if not await chats_repo.set_active(chat_id, False):
         await message.answer("❌ Не удалось сохранить статус деактивации.")

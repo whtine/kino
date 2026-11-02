@@ -1,7 +1,7 @@
 # VK Bot Project Plan & Requirements
 
 ## Project Overview
-VK Bot for chat moderation with role-based permissions (levels 0-6), Supabase database, deployed on a Render Web Service.
+VK Bot for chat moderation with role-based permissions (levels 0-4), Supabase database, deployed on a Render Web Service.
 
 ## Core Requirements
 
@@ -11,16 +11,14 @@ VK Bot for chat moderation with role-based permissions (levels 0-6), Supabase da
 - Commands and moderation only work after activation; activation requires a VK chat administrator
 - Chat state persisted in Supabase
 
-### 2. Role System (0-6)
+### 2. Role System (0-4)
 | Level | Name | Key Commands |
 |-------|------|--------------|
-| 0 | Участник | /id, /stats, /top, /chatid, /rep, /help |
-| 1 | Модератор фильмов | /kick, /mute, /warn, /clear, /staff, /getnick, /snick, /rnick, /nlist, /getwarn |
-| 2 | Администратор | /unmute, /unwarn, /mutelist, /warnlist, /addmoder, /delmoder |
-| 3 | Зам. главы отдела кинопоказов | /ban, /unban, /timeout, /zov, /addadmin, /deladmin, /sban, /sunban, /ssnick, /srnick, /skick, /szov, /pin, /unpin |
-| 4 | Глава отдела кинопоказов | /addzam, /delzam, /otdel, /bind, /unbind, /bindlist, /delotdel, /giveowner, /myotdel, /settings |
-| 5 | Старший администратор (legacy) | /chat, /antitag, /info settings |
-| 6 | Спец. права | /deactivate and initial setup |
+| 0 | Участник | /id, /stats, /top, /chat, /chatid, /rep, /help, /info |
+| 1 | Модератор фильмов | /kick, /mute, /warn, /unwarn, /clear, /del, /staff, /olist, /getnick, /snick, /rnick, /nlist, /getwarn, /check |
+| 2 | Администратор | /unmute, /mutelist, /warnlist, /ban, /unban, /getban, /timeout, /addmoder, /delmoder, /logs, /antitag |
+| 3 | Зам. главы отдела кинопоказов | /timeout, /zov, /addadmin, /deladmin, /gnick, /sban, /sunban, /ssnick, /srnick, /skick, /szov, /pin, /unpin, /async, /import |
+| 4 | Глава отдела кинопоказов | /addzam, /delzam, /otdel, /bind, /unbind, /bindlist, /delotdel, /giveowner, /myotdel, /settings, /deactivate; активация беседы назначает роль 4 |
 
 ### 3. Database (Supabase/PostgreSQL)
 Tables:

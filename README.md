@@ -1,11 +1,11 @@
 # Kino — VK Chat Moderation Bot
 
-VK bot for chat moderation with role-based permissions (levels 0-6), Supabase database, deployed on a Render Web Service.
+VK bot for chat moderation with role-based permissions (levels 0-4), Supabase database, deployed on a Render Web Service.
 
 ## Features
 
-- **Activation system**: bot joins chat → inactive by default; a VK chat administrator activates it via `/activate` (or `*`), and receives role 6 for setup.
-- **Role system**: 0 participant, 1 movie moderator, 2 administrator, 3 department deputy, 4 department head; legacy levels 5-6 remain available for senior administrator and setup rights.
+- **Activation system**: bot joins chat → inactive by default; a VK chat administrator activates it via `/activate` (or `*`), and receives role 4.
+- **Role system**: levels 0-4 only: participant, movie moderator, administrator, department deputy, and department head.
 - **Moderation**: kick, mute, warn, clear, ban, timeout, logs.
 - **Nicknames**: local (per chat) and global (per group).
 - **Global commands**: /zov, /gzov, /antitag, /pin, /unpin, /gban, /gunban, /gsnick, /grnick.
@@ -49,6 +49,7 @@ At startup, the bot enables the Long Poll `message_event` update used by inline 
 db/migrations/001_init.sql
 db/migrations/002_feature_updates.sql
 db/migrations/003_ban_expirations.sql
+db/migrations/004_role_cap_4.sql
 ```
 
 4. Start the bot:
@@ -74,4 +75,4 @@ Mute durations accept Russian units (for example, `/mute 123 30м флуд` or `
 `/rep` allows one vote for each other user per chat. Cross-chat operations only target conversations explicitly linked to the same department with `/bind`; `/sban`, `/sunban`, `/ssnick`, `/srnick`, `/skick`, and `/szov` act on the bound chats. `/async timeout on|off` applies silence mode to those chats. Department aliases are `/otdel`, `/delotdel`, and `/myotdel`.
 In an inactive chat, only `/start` and `/activate` (or `*`) are accepted. `/start` displays the activation button; inviting new members triggers a welcome message with `/info`.
 `/help` displays commands with descriptions; inline role buttons show only commands assigned to the selected level. `/getban` (level 2+) lists active bans in the current chat and, when it belongs to a group, that group's bans across synchronized chats.
-`/info` lists the chat's official links. Role 5+ can add links with `/info add Label https://example.com` and remove them with `/info remove N`.
+`/info` lists the chat's official links. Role 4 can add links with `/info add Label https://example.com` and remove them with `/info remove N`.

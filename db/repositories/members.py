@@ -42,9 +42,9 @@ class MembersRepository:
         return bool(result.data)
 
     async def set_role(self, chat_id: int, user_id: int, role: int) -> bool:
-        """Set member role (0-6)."""
-        if not 0 <= role <= 6:
-            raise ValueError("Role must be between 0 and 6")
+        """Set member role (0-4)."""
+        if not 0 <= role <= 4:
+            raise ValueError("Role must be between 0 and 4")
         await self.get_or_create(chat_id, user_id)
         return await self.update(chat_id, user_id, {"role": role})
 
