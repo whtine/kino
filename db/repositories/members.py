@@ -1,3 +1,4 @@
+import asyncio
 from db.supabase import get_supabase
 from typing import Optional, Dict, Any, List
 import logging
@@ -12,7 +13,14 @@ class MembersRepository:
     async def get(self, chat_id: int, user_id: int) -> Optional[Dict[str, Any]]:
         """Get member by chat and user ID."""
         sb = get_supabase()
-        result = sb.table(self.table).select("*").eq("chat_id", chat_id).eq("user_id", user_id).limit(1).execute()
+        result = await asyncio.to_thread(
+            sb.table(self.table)
+            .select("*")
+            .eq("chat_id", chat_id)
+            .eq("user_id", user_id)
+            .limit(1)
+            .execute
+        )
         return result.data[0] if result.data else None
 
     async def get_or_create(self, chat_id: int, user_id: int) -> Dict[str, Any]:

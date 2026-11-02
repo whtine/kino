@@ -26,10 +26,6 @@ class StatsMiddleware(BaseMiddleware[Message]):
         if chat_id is None or not user_id:
             return
 
-        chat = await chats_repo.get(chat_id)
-        if not chat or not chat.get("is_active"):
-            return
-
         if getattr(message, "action", None):
             return
         cmid = getattr(message, "conversation_message_id", None)
@@ -38,6 +34,10 @@ class StatsMiddleware(BaseMiddleware[Message]):
         if user_id < 0:
             return
         if (getattr(message, "text", None) or "").strip().startswith("/"):
+            return
+
+        chat = await chats_repo.get(chat_id)
+        if not chat or not chat.get("is_active"):
             return
 
         try:

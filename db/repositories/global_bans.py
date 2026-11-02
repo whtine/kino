@@ -1,3 +1,4 @@
+import asyncio
 from db.supabase import get_supabase
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta, timezone
@@ -45,7 +46,11 @@ class GlobalBansRepository:
     async def is_banned(self, group_id: int, user_id: int) -> Optional[Dict[str, Any]]:
         """Check if user is globally banned in group."""
         sb = get_supabase()
-        result = sb.table(self.bans_table).select("*").eq("group_id", group_id).eq("user_id", user_id).limit(1).execute()
+        query = (
+            sb.table(self.bans_table).select("*").eq("group_id", group_id)
+            .eq("user_id", user_id).limit(1)
+        )
+        result = await asyncio.to_thread(query.execute)
         if not result.data:
             return None
         ban = result.data[0]

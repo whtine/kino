@@ -129,7 +129,6 @@ async def _ensure_chat(message: Message) -> tuple[int, int]:
     chat_id = message.peer_id
     if chat_id < 2_000_000_000:
         raise ValueError("Команда доступна только в беседе.")
-    await chats.get_or_create(chat_id)
     if message.from_id <= 0:
         raise ValueError("Команда доступна только пользователям.")
     return chat_id, message.from_id
@@ -752,19 +751,30 @@ async def command_router(message: Message):
             )
             return
         if command == "getban":
+            target_id, _ = _target_from_args(message, args)
+            if not target_id:
+                await message.answer(
+                    "Укажите ID пользователя или ответьте на его сообщение: "
+                    "/getban [id]"
+                )
+                return
+            local_ban, group_id = await asyncio.gather(
+                chats.get_ban(chat_id, target_id),
+                _bound_group(chat_id),
+            )
             sections = [
                 format_ban_list(
-                    await chats.get_banned_list(chat_id),
-                    "⛔ Активные блокировки в этой беседе:",
+                    [local_ban] if local_ban else [],
+                    f"⛔ Блокировка {format_user_mention(target_id)} в этой беседе:",
                 )
             ]
-            group_id = await _bound_group(chat_id)
             if group_id:
+                global_ban = await global_data.is_banned(group_id, target_id)
                 sections.append(
                     format_ban_list(
-                        await global_data.get_banned_list(group_id),
-                        "🌐 Глобальные блокировки отдела "
-                        "(действуют в синхронизированных беседах):",
+                        [global_ban] if global_ban else [],
+                        f"🌐 Глобальная блокировка {format_user_mention(target_id)} "
+                        "в синхронизированных беседах:",
                     )
                 )
             await message.answer("\n\n".join(sections))

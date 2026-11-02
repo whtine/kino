@@ -1,3 +1,4 @@
+import asyncio
 from db.supabase import get_supabase
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
@@ -13,7 +14,13 @@ class ChatsRepository:
     async def get(self, chat_id: int) -> Optional[Dict[str, Any]]:
         """Get chat by ID."""
         sb = get_supabase()
-        result = sb.table(self.table).select("*").eq("chat_id", chat_id).limit(1).execute()
+        result = await asyncio.to_thread(
+            sb.table(self.table)
+            .select("*")
+            .eq("chat_id", chat_id)
+            .limit(1)
+            .execute
+        )
         return result.data[0] if result.data else None
 
     async def get_or_create(self, chat_id: int, title: str = None) -> Dict[str, Any]:
@@ -59,20 +66,28 @@ class ChatsRepository:
 
     async def is_banned(self, chat_id: int, user_id: int) -> bool:
         """Check whether a local chat ban is still active."""
+        return bool(await self.get_ban(chat_id, user_id))
+
+    async def get_ban(
+        self, chat_id: int, user_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Get an active local ban for one user."""
         sb = get_supabase()
         result = (
-            sb.table("chat_bans").select("expires_at")
-            .eq("chat_id", chat_id).eq("user_id", user_id).limit(1).execute()
+            sb.table("chat_bans").select("*")
+            .eq("chat_id", chat_id).eq("user_id", user_id).limit(1)
         )
+        result = await asyncio.to_thread(result.execute)
         if not result.data:
-            return False
-        expires_at = result.data[0].get("expires_at")
+            return None
+        ban = result.data[0]
+        expires_at = ban.get("expires_at")
         if not expires_at:
-            return True
+            return ban
         expiration = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
         if expiration.tzinfo is None:
             expiration = expiration.replace(tzinfo=timezone.utc)
-        return expiration > datetime.now(timezone.utc)
+        return ban if expiration > datetime.now(timezone.utc) else None
 
     async def get_banned_list(self, chat_id: int) -> List[Dict[str, Any]]:
         """Get active local bans in a chat."""
