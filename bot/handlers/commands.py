@@ -287,6 +287,7 @@ async def command_router(message: Message):
         command, args = _parts(text)
     else:
         return
+    invoked_command = command
     command = _COMMAND_ALIASES.get(command, command)
     activation_command = str(config.activation_command or "/activate").strip()
     activation_command = activation_command.lstrip("/").split("@", 1)[0].lower()
@@ -1141,7 +1142,14 @@ async def command_router(message: Message):
             target_id, rest = _target_from_args(message, args)
             group_id = await _bound_group(chat_id)
             if not target_id or not group_id or (command == "gsnick" and not rest):
-                await message.answer(f"Использование: /{command} [id] ник; нужна привязанная группа.")
+                usage = (
+                    f"/{invoked_command} [id] ник"
+                    if command == "gsnick"
+                    else f"/{invoked_command} [id]"
+                )
+                await message.answer(
+                    f"Использование: {usage}; нужна привязанная группа."
+                )
                 return
             if command == "gsnick":
                 previous_nickname = await global_data.get_nickname(group_id, target_id)
@@ -1184,7 +1192,9 @@ async def command_router(message: Message):
         if command == "creategroup":
             name = " ".join(args).strip()
             if not name:
-                await message.answer("Укажите название отдела: /otdel Название")
+                await message.answer(
+                    f"Укажите название отдела: /{invoked_command} Название"
+                )
                 return
             group = await groups.create(name[:100], user_id)
             await message.answer(f"✅ Отдел «{group['name']}» создан. ID: {group['id']}")
@@ -1192,7 +1202,9 @@ async def command_router(message: Message):
         if command == "delgroup":
             reference = " ".join(args).strip()
             if not reference:
-                await message.answer("Использование: /delotdel Название отдела")
+                await message.answer(
+                    f"Использование: /{invoked_command} Название отдела"
+                )
                 return
             group = await _owned_group_for(user_id, reference)
             if not group:
@@ -1569,11 +1581,18 @@ async def command_router(message: Message):
                 f"Не удалось исключить участника из бесед: {kick_failures}."
             )
             return
-        await message.answer(f"Неизвестная команда /{command}. Список команд: /help")
+        await message.answer(
+            f"Неизвестная команда /{invoked_command}. Список команд: /help"
+        )
     except ValueError as exc:
         await message.answer(f"❌ {exc}")
     except Exception:
-        logger.exception("Command /%s failed for chat %s", command, message.peer_id)
+        logger.exception(
+            "Command /%s (canonical /%s) failed for chat %s",
+            invoked_command,
+            command,
+            message.peer_id,
+        )
         await message.answer("❌ Не удалось выполнить команду из-за ошибки. Попробуйте позже.")
 
 
