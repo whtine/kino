@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 from vkbottle.bot import Blueprint, Message, MessageEvent
 
 from bot.utils.formatters import (
+    format_ban_list,
     format_duration,
     format_help_level_text,
     format_help_text,
@@ -745,6 +746,24 @@ async def command_router(message: Message):
                 f"✅ Блокировка в чате с {target} снята.\n"
                 f"Причина: {reason or 'не указана'}."
             )
+            return
+        if command == "getban":
+            sections = [
+                format_ban_list(
+                    await chats.get_banned_list(chat_id),
+                    "⛔ Активные блокировки в этой беседе:",
+                )
+            ]
+            group_id = await _bound_group(chat_id)
+            if group_id:
+                sections.append(
+                    format_ban_list(
+                        await global_data.get_banned_list(group_id),
+                        "🌐 Глобальные блокировки отдела "
+                        "(действуют в синхронизированных беседах):",
+                    )
+                )
+            await message.answer("\n\n".join(sections))
             return
         if command == "mute":
             target_id, rest = _target_from_args(message, args)

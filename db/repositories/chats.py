@@ -74,6 +74,26 @@ class ChatsRepository:
             expiration = expiration.replace(tzinfo=timezone.utc)
         return expiration > datetime.now(timezone.utc)
 
+    async def get_banned_list(self, chat_id: int) -> List[Dict[str, Any]]:
+        """Get active local bans in a chat."""
+        sb = get_supabase()
+        result = (
+            sb.table("chat_bans").select("*").eq("chat_id", chat_id).execute()
+        )
+        now = datetime.now(timezone.utc)
+        active = []
+        for ban in result.data or []:
+            expires_at = ban.get("expires_at")
+            if not expires_at:
+                active.append(ban)
+                continue
+            expiration = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+            if expiration.tzinfo is None:
+                expiration = expiration.replace(tzinfo=timezone.utc)
+            if expiration > now:
+                active.append(ban)
+        return active
+
     async def bind_group(self, chat_id: int, group_id: int) -> bool:
         """Bind chat to a group."""
         sb = get_supabase()

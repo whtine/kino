@@ -74,6 +74,20 @@ def format_ban(ban: Optional[dict]) -> str:
     return f"Забанен: {ban.get('user_id')} (причина: {ban.get('reason') or 'нет'})"
 
 
+def format_ban_list(bans: list[dict], title: str) -> str:
+    lines = [title]
+    for ban in bans:
+        expires_at = ban.get("expires_at")
+        expiry = f"до {expires_at}" if expires_at else "бессрочно"
+        lines.append(
+            f"• {format_user_mention(ban['user_id'])} — "
+            f"{ban.get('reason') or 'причина не указана'}; {expiry}"
+        )
+    if not bans:
+        lines.append("• Активных блокировок нет.")
+    return "\n".join(lines)
+
+
 def format_user_mention(user_id: int, name: Optional[str] = None) -> str:
     return f"[id{user_id}|{name or f'ID {user_id}'}]"
 
