@@ -316,6 +316,22 @@ class VKAPIWrapper:
                 names.setdefault(profile_id, name)
         return names
 
+    async def resolve_user_id(self, screen_name: str) -> Optional[int]:
+        """Resolve a VK profile screen name to a positive user ID."""
+        try:
+            profiles = await self.api.users.get(user_ids=[screen_name])
+        except Exception:
+            logger.exception("Could not resolve VK profile %s", screen_name)
+            return None
+        if not profiles:
+            return None
+        profile = profiles[0]
+        user_id = (
+            profile.get("id") if isinstance(profile, dict)
+            else getattr(profile, "id", None)
+        )
+        return int(user_id) if user_id and int(user_id) > 0 else None
+
     async def mention_all(self, chat_id: int, max_mentions: int = 100) -> str:
         profiles = await self.get_member_profiles(chat_id)
         names: Dict[int, str] = {}
@@ -346,7 +362,9 @@ class VKAPIWrapper:
             first_name = name.split(" ")[0] if name else ""
             last_name = name.split(" ")[1] if len(name.split(" ")) > 1 else ""
             suffix = f" {last_name[0]}." if last_name else ""
-            mentions.append(f"[id{member_id}|{first_name}{suffix}]")
+            mentions.append(
+                f"[id{member_id}|{first_name}{suffix} (ID: {member_id})]"
+            )
             seen.add(member_id)
         return " ".join(mentions)
 

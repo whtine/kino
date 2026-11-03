@@ -1,6 +1,6 @@
 """Message formatters for bot responses."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Optional
 
 from bot.utils.permissions import get_role_name
@@ -89,7 +89,10 @@ def format_ban_list(bans: list[dict], title: str) -> str:
 
 
 def format_user_mention(user_id: int, name: Optional[str] = None) -> str:
-    return f"[id{user_id}|{name or f'ID {user_id}'}]"
+    label = name or f"ID {user_id}"
+    if name and name != f"ID {user_id}":
+        label = f"{name} (ID: {user_id})"
+    return f"[id{user_id}|{label}]"
 
 
 def format_user_link(user_id: int) -> str:
@@ -128,15 +131,56 @@ def format_user_info(
     return "\n".join(lines)
 
 
-def format_punishment(punishment: dict) -> str:
-    reason = f" | Причина: {punishment['reason']}" if punishment.get("reason") else ""
+def format_punishment(
+    punishment: dict, names: Optional[dict[int, str]] = None
+) -> str:
+    action_names = {
+        "warn": "Предупреждение",
+        "mute": "Мут",
+        "unmute": "Снятие мута",
+        "ban": "Блокировка в чате",
+        "unban": "Снятие блокировки в чате",
+        "kick": "Исключение из чата",
+        "skick": "Исключение из бесед отдела",
+        "gban": "Глобальная блокировка",
+        "gunban": "Снятие глобальной блокировки",
+        "role_change": "Изменение роли",
+        "nickname_set": "Установка никнейма",
+        "nickname_removed": "Удаление никнейма",
+        "global_nickname_set": "Установка глобального никнейма",
+        "global_nickname_removed": "Удаление глобального никнейма",
+        "group_owner_change": "Передача владельца отдела",
+        "unwarn": "Снятие предупреждения",
+        "restore_kick": "Возврат в беседу",
+    }
+    kind = punishment.get("type", "?")
+    action = action_names.get(kind, str(kind).replace("_", " ").capitalize())
+    reason_text = punishment.get("reason")
+    if reason_text and reason_text.startswith("Роль: "):
+        reason_text = f"Роль изменена: {reason_text.removeprefix('Роль: ')}"
+    reason = f" — {reason_text}" if reason_text else ""
     moderator = punishment.get("moderator_id")
     created = punishment.get("created_at", "")
     target = punishment.get("target_id")
+    target_mention = (
+        format_user_mention(target, (names or {}).get(target))
+        if target
+        else "—"
+    )
+    moderator_mention = (
+        format_user_mention(moderator, (names or {}).get(moderator))
+        if moderator
+        else "?"
+    )
+    if created:
+        try:
+            created_at = datetime.fromisoformat(created.replace("Z", "+00:00"))
+            created = created_at.strftime("%d.%m.%Y %H:%M UTC")
+        except ValueError:
+            pass
     return (
-        f"• {punishment.get('type', '?')} "
-        f"{format_user_mention(target) if target else ''}{reason} | "
-        f"Модератор: {format_user_mention(moderator) if moderator else '?'} | {created}"
+        f"• {action}: {target_mention}{reason} "
+        f"| Модератор: {moderator_mention} | {created}"
     )
 
 

@@ -125,7 +125,9 @@ def _is_duplicate_message(message: Message) -> bool:
     return False
 
 
-def _target_from_args(message: Message, args: list[str]) -> tuple[Optional[int], list[str]]:
+async def _target_from_args(
+    message: Message, args: list[str]
+) -> tuple[Optional[int], list[str]]:
     if message.reply_message and message.reply_message.from_id > 0:
         return message.reply_message.from_id, args
     if args:
@@ -133,9 +135,31 @@ def _target_from_args(message: Message, args: list[str]) -> tuple[Optional[int],
         mention = TARGET_PATTERN.match(token)
         if mention:
             return int(mention.group(1)), args[1:]
-        token = token.lstrip("@").strip()
+        token = token.strip(".,;:!?)]}")
         if token.isdigit() and int(token) > 0:
             return int(token), args[1:]
+        if token.startswith("@") and token[1:].isdigit():
+            return int(token[1:]), args[1:]
+
+        url = urlsplit(token if "://" in token else f"//{token}")
+        host = (url.hostname or "").lower()
+        if host in {"vk.com", "www.vk.com", "m.vk.com"}:
+            path_parts = [part for part in url.path.split("/") if part]
+            if len(path_parts) == 1:
+                profile = path_parts[0]
+                if profile.startswith("id") and profile[2:].isdigit():
+                    return int(profile[2:]), args[1:]
+                if profile.isdigit() and int(profile) > 0:
+                    return int(profile), args[1:]
+                if re.fullmatch(r"[A-Za-z0-9_.-]+", profile) and vk_api:
+                    resolved_id = await vk_api.resolve_user_id(profile)
+                    if resolved_id:
+                        return resolved_id, args[1:]
+        elif token.startswith("@") and re.fullmatch(r"@[A-Za-z0-9_.-]+", token):
+            if vk_api:
+                resolved_id = await vk_api.resolve_user_id(token[1:])
+                if resolved_id:
+                    return resolved_id, args[1:]
     return None, args
 
 
@@ -258,7 +282,8 @@ async def _render_nick_list(
         user_id = int(entry["user_id"])
         name = names.get(user_id) or f"ID {user_id}"
         lines.append(
-            f"{start + index}) [id{user_id}|{name}] — {entry['nickname']}"
+            f"{start + index}) "
+            f"{format_user_mention(user_id, name)} — {entry['nickname']}"
         )
     lines.append(f"Страница {page + 1}/{page_count}")
     return "\n".join(lines), get_nick_list_keyboard(page, page_count)
@@ -422,7 +447,7 @@ async def command_router(message: Message):
             )
             return
         if command == "id":
-            target_id, _ = _target_from_args(message, args)
+            target_id, _ = await _target_from_args(message, args)
             target_id = target_id or user_id
             member = await members.get_or_create(chat_id, target_id)
             stat = await stats.get_user_stats(chat_id, target_id)
@@ -432,7 +457,7 @@ async def command_router(message: Message):
             )
             return
         if command == "stats":
-            target_id, _ = _target_from_args(message, args)
+            target_id, _ = await _target_from_args(message, args)
             target_id = target_id or user_id
             member = await members.get_or_create(chat_id, target_id)
             stat = await stats.get_user_stats(chat_id, target_id)
@@ -562,7 +587,7 @@ async def command_router(message: Message):
             await message.answer("\n".join(output) if rows else "Пока нет статистики.")
             return
         if command == "rep":
-            target_id, _ = _target_from_args(message, args)
+            target_id, _ = await _target_from_args(message, args)
             if not target_id:
                 await message.answer("Ответьте на сообщение пользователя или укажите его ID: /rep [id]")
                 return
@@ -618,15 +643,14 @@ async def command_router(message: Message):
             )
             lines = ["Сотрудники отдела:"]
             lines.extend(
-                f"• [id{entry['user_id']}|"
-                f"{entry.get('nickname') or names.get(entry['user_id']) or entry['user_id']}] "
+                f"• {format_user_mention(entry['user_id'], entry.get('nickname') or names.get(entry['user_id']))} "
                 f"— {get_role_name(entry['role'])}"
                 for entry in staff
             )
             await message.answer("\n".join(lines))
             return
         if command == "check":
-            target_id, _ = _target_from_args(message, args)
+            target_id, _ = await _target_from_args(message, args)
             if not target_id:
                 await message.answer("Ответьте на сообщение или укажите ID пользователя.")
                 return
@@ -639,7 +663,7 @@ async def command_router(message: Message):
             )
             return
         if command == "getwarn":
-            target_id, _ = _target_from_args(message, args)
+            target_id, _ = await _target_from_args(message, args)
             if not target_id:
                 target_id = user_id
             entry = await members.get_or_create(chat_id, target_id)
@@ -651,7 +675,7 @@ async def command_router(message: Message):
             )
             return
         if command == "warn":
-            target_id, rest = _target_from_args(message, args)
+            target_id, rest = await _target_from_args(message, args)
             if not target_id:
                 await message.answer(
                     "Использование: /warn [id] | [1–3] | причина "
@@ -706,7 +730,7 @@ async def command_router(message: Message):
             )
             return
         if command == "skick":
-            target_id, rest = _target_from_args(message, args)
+            target_id, rest = await _target_from_args(message, args)
             group_id = await _bound_group(chat_id)
             if not target_id or not group_id:
                 await message.answer(
@@ -741,7 +765,7 @@ async def command_router(message: Message):
             )
             return
         if command in {"kick", "ban"}:
-            target_id, rest = _target_from_args(message, args)
+            target_id, rest = await _target_from_args(message, args)
             if not target_id:
                 await message.answer(f"Использование: /{command} [id] причина (или ответьте на сообщение)")
                 return
@@ -827,7 +851,7 @@ async def command_router(message: Message):
                 )
             return
         if command == "unban":
-            target_id, rest = _target_from_args(message, args)
+            target_id, rest = await _target_from_args(message, args)
             if not target_id:
                 await message.answer("Укажите ID пользователя.")
                 return
@@ -866,7 +890,7 @@ async def command_router(message: Message):
             )
             return
         if command == "getban":
-            target_id, _ = _target_from_args(message, args)
+            target_id, _ = await _target_from_args(message, args)
             if not target_id:
                 await message.answer(
                     "Укажите ID пользователя или ответьте на его сообщение: "
@@ -895,7 +919,7 @@ async def command_router(message: Message):
             await message.answer("\n\n".join(sections))
             return
         if command == "mute":
-            target_id, rest = _target_from_args(message, args)
+            target_id, rest = await _target_from_args(message, args)
             duration, duration_tokens = _duration_from_args(rest)
             if not target_id or not duration:
                 await message.answer(
@@ -933,7 +957,7 @@ async def command_router(message: Message):
             )
             return
         if command == "unmute":
-            target_id, rest = _target_from_args(message, args)
+            target_id, rest = await _target_from_args(message, args)
             if not target_id:
                 await message.answer("Укажите ID или ответьте на сообщение пользователя.")
                 return
@@ -950,7 +974,7 @@ async def command_router(message: Message):
             )
             return
         if command == "unwarn":
-            target_id, rest = _target_from_args(message, args)
+            target_id, rest = await _target_from_args(message, args)
             if not target_id:
                 await message.answer("Укажите ID или ответьте на сообщение пользователя.")
                 return
@@ -1128,7 +1152,20 @@ async def command_router(message: Message):
             else:
                 rows = await punishments.get_recent_logs(chat_id)
                 title = "📜 Последние действия:"
-            lines = [title] + [format_punishment(row) for row in rows]
+            user_ids = {
+                int(user_id)
+                for row in rows
+                for user_id in (row.get("target_id"), row.get("moderator_id"))
+                if user_id
+            }
+            names = (
+                await vk_api.get_member_names(chat_id, list(user_ids))
+                if vk_api and user_ids
+                else {}
+            )
+            lines = [title] + [
+                format_punishment(row, names) for row in rows
+            ]
             await message.answer("\n".join(lines) if rows else "Записей нет.")
             return
         if command == "timeout":
@@ -1162,7 +1199,7 @@ async def command_router(message: Message):
             )
             return
         if command in {"snick", "rnick"}:
-            target_id, rest = _target_from_args(message, args)
+            target_id, rest = await _target_from_args(message, args)
             nickname = " ".join(rest).strip() if rest else ""
             if command == "snick" and (not target_id or not nickname):
                 await message.answer("Использование: /snick [id] ник (или ответьте на сообщение)")
@@ -1221,7 +1258,7 @@ async def command_router(message: Message):
                 )
             return
         if command == "getnick":
-            target_id, _ = _target_from_args(message, args)
+            target_id, _ = await _target_from_args(message, args)
             target_id = target_id or user_id
             nickname = await members.get_nickname(chat_id, target_id)
             names = await vk_api.get_member_names(chat_id, [target_id]) if vk_api else {}
@@ -1244,7 +1281,7 @@ async def command_router(message: Message):
             await message.answer(text, keyboard=keyboard)
             return
         if command == "gnick":
-            target_id, _ = _target_from_args(message, args)
+            target_id, _ = await _target_from_args(message, args)
             group_id = await _bound_group(chat_id)
             if not target_id or not group_id:
                 await message.answer("Укажите пользователя и привяжите беседу к группе.")
@@ -1253,7 +1290,7 @@ async def command_router(message: Message):
             await message.answer(f"🌐 Глобальный ник: {nickname or 'не установлен'}")
             return
         if command in {"gsnick", "grnick"}:
-            target_id, rest = _target_from_args(message, args)
+            target_id, rest = await _target_from_args(message, args)
             group_id = await _bound_group(chat_id)
             if not target_id or not group_id or (command == "gsnick" and not rest):
                 usage = (
@@ -1412,7 +1449,7 @@ async def command_router(message: Message):
             await message.answer("Привязанные беседы:\n" + "\n".join(map(str, bound)))
             return
         if command == "giveowner":
-            target_id, rest = _target_from_args(message, args)
+            target_id, rest = await _target_from_args(message, args)
             if rest:
                 group = await _owned_group_for(user_id, " ".join(rest))
             else:
@@ -1442,7 +1479,7 @@ async def command_router(message: Message):
             )
             return
         if command == "gban":
-            target_id, rest = _target_from_args(message, args)
+            target_id, rest = await _target_from_args(message, args)
             group_id = await _bound_group(chat_id)
             if not target_id or not group_id:
                 await message.answer(
@@ -1491,7 +1528,7 @@ async def command_router(message: Message):
             )
             return
         if command == "gunban":
-            target_id, rest = _target_from_args(message, args)
+            target_id, rest = await _target_from_args(message, args)
             group_id = await _bound_group(chat_id)
             if not target_id or not group_id:
                 await message.answer("Укажите ID пользователя; беседа должна быть привязана к группе.")
@@ -1568,7 +1605,7 @@ async def command_router(message: Message):
             current = await chats.get(chat_id)
             settings = current.get("settings") or {}
             restricted = list(settings.get("antitag_users", []))
-            target_id, _ = _target_from_args(message, args)
+            target_id, _ = await _target_from_args(message, args)
             if args and args[0].lower() in {"off", "выкл"}:
                 settings["antitag"] = False
                 if not await chats.update_settings(chat_id, {"antitag": False}):
@@ -1893,7 +1930,7 @@ async def _handle_punishment_callback(event: MessageEvent, payload: dict) -> Non
 
 
 async def _assign_role(message: Message, args: list[str], role: int, actor_id: int, chat_id: int):
-    target_id, _ = _target_from_args(message, args)
+    target_id, _ = await _target_from_args(message, args)
     if not target_id:
         await message.answer("Ответьте на сообщение пользователя или укажите его ID.")
         return
