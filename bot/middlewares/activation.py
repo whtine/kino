@@ -130,13 +130,13 @@ class ActivationMiddleware(BaseMiddleware[Message]):
                 return
 
         settings = chat.get("settings") or {}
-        if (
-            settings.get("timeout")
-            and message.from_id > 0
-            and not _is_timeout_exempt(text)
-        ):
-            await self._delete_message(message, chat_id)
-            self.stop(f"Тихий режим активен в чате {chat_id}")
+        if settings.get("timeout") and message.from_id > 0:
+            if (
+                not _is_timeout_exempt(text)
+                and await members_repo.get_role(chat_id, message.from_id) <= 3
+            ):
+                await self._delete_message(message, chat_id)
+                self.stop(f"Тихий режим активен в чате {chat_id}")
 
         if _is_antitag_violation(settings, text):
             await self._delete_message(message, chat_id)
