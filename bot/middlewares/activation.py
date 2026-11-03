@@ -30,6 +30,27 @@ def _is_antitag_violation(settings: dict, text: str) -> bool:
     return not restricted or bool(mentioned & restricted)
 
 
+def _is_timeout_exempt(text: str) -> bool:
+    parts = text.strip().lower().split()
+    if not parts:
+        return False
+    command = parts[0].split("@", 1)[0].lstrip("/")
+    args = parts[1:]
+    return (
+        command == "timeout" and len(args) == 1 and args[0] in {"off", "выкл", "0"}
+    ) or (
+        command == "settings"
+        and len(args) == 2
+        and args[0] == "timeout"
+        and args[1] in {"off", "выкл", "0"}
+    ) or (
+        command == "async"
+        and len(args) == 2
+        and args[0] == "timeout"
+        and args[1] in {"off", "выкл", "0"}
+    )
+
+
 class ActivationMiddleware(BaseMiddleware[Message]):
     """Allow activation commands and block processing in inactive chats."""
 
@@ -96,7 +117,11 @@ class ActivationMiddleware(BaseMiddleware[Message]):
                 return
 
         settings = chat.get("settings") or {}
-        if settings.get("timeout") and not (getattr(message, "text", None) or "").strip().startswith("/"):
+        if (
+            settings.get("timeout")
+            and message.from_id > 0
+            and not _is_timeout_exempt(text)
+        ):
             await self._delete_message(message, chat_id)
             self.stop(f"Тихий режим активен в чате {chat_id}")
 
@@ -106,9 +131,25 @@ class ActivationMiddleware(BaseMiddleware[Message]):
 
     async def _delete_message(self, message: Message, chat_id: int) -> None:
         message_id = getattr(message, "conversation_message_id", None)
-        if message_id and vk_api:
-            if not await vk_api.delete_message(chat_id, [message_id]):
-                logger.error("Failed to delete restricted message %s in chat %s", message_id, chat_id)
+        if not message_id:
+            logger.error(
+                "Could not delete restricted message in chat %s: missing conversation message ID",
+                chat_id,
+            )
+            return
+        if not vk_api:
+            logger.error(
+                "Could not delete restricted message %s in chat %s: VK API is not initialized",
+                message_id,
+                chat_id,
+            )
+            return
+        if not await vk_api.delete_message(chat_id, [message_id]):
+            logger.error(
+                "Failed to delete restricted message %s in chat %s",
+                message_id,
+                chat_id,
+            )
 
 
 __all__ = ("ActivationMiddleware",)
