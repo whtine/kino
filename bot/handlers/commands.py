@@ -135,12 +135,13 @@ async def _target_from_args(
         mention = TARGET_PATTERN.match(token)
         if mention:
             return int(mention.group(1)), args[1:]
-        token = token.strip(".,;:!?)]}")
+        token = token.strip("<([{").strip(".,;:!?)]}>")
         if token.isdigit() and int(token) > 0:
             return int(token), args[1:]
         if token.startswith("@") and token[1:].isdigit():
             return int(token[1:]), args[1:]
 
+        token = token.split("|", 1)[0]
         url = urlsplit(token if "://" in token else f"//{token}")
         host = (url.hostname or "").lower()
         if host in {"vk.com", "www.vk.com", "m.vk.com"}:
