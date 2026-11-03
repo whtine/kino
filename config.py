@@ -18,6 +18,7 @@ class Config:
 
     # Render web server
     port: int = 8000
+    health_ping_url: str | None = None
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -61,6 +62,9 @@ class Config:
             activation_command=os.getenv("ACTIVATION_COMMAND", "/activate"),
             max_mentions_per_zov=max_mentions,
             port=port,
+            health_ping_url=(
+                os.getenv("HEALTH_PING_URL") or os.getenv("RENDER_EXTERNAL_URL")
+            ),
         )
 
 

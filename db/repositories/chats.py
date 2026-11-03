@@ -1,5 +1,6 @@
 import asyncio
 from db.supabase import get_supabase
+from db.cache import repository_cache
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timezone
 import logging
@@ -13,6 +14,10 @@ class ChatsRepository:
 
     async def get(self, chat_id: int) -> Optional[Dict[str, Any]]:
         """Get chat by ID."""
+        key = ("chat", chat_id)
+        cached, chat = repository_cache.get(key)
+        if cached:
+            return chat
         sb = get_supabase()
         result = await asyncio.to_thread(
             sb.table(self.table)
@@ -21,7 +26,9 @@ class ChatsRepository:
             .limit(1)
             .execute
         )
-        return result.data[0] if result.data else None
+        chat = result.data[0] if result.data else None
+        repository_cache.set(key, chat)
+        return chat
 
     async def get_or_create(self, chat_id: int, title: str = None) -> Dict[str, Any]:
         """Get existing chat or create new one."""
@@ -33,17 +40,28 @@ class ChatsRepository:
     async def create(self, chat_id: int, title: str = None) -> Dict[str, Any]:
         """Create new chat record."""
         sb = get_supabase()
-        sb.table(self.table).upsert(data := {"chat_id": chat_id, "title": title or f"Chat {chat_id}"}, on_conflict="chat_id").execute()
+        await asyncio.to_thread(
+            sb.table(self.table)
+            .upsert(
+                {"chat_id": chat_id, "title": title or f"Chat {chat_id}"},
+                on_conflict="chat_id",
+            )
+            .execute
+        )
+        repository_cache.invalidate(("chat", chat_id))
         return await self.get(chat_id)
 
     async def update(self, chat_id: int, data: Dict[str, Any]) -> bool:
         """Update chat fields."""
         sb = get_supabase()
-        result = (
+        result = await asyncio.to_thread(
             sb.table(self.table).update(data).eq("chat_id", chat_id)
-            .select("chat_id").execute()
+            .select("chat_id").execute
         )
-        return bool(result.data)
+        updated = bool(result.data)
+        if updated:
+            repository_cache.invalidate(("chat", chat_id))
+        return updated
 
     async def set_active(self, chat_id: int, is_active: bool) -> bool:
         """Activate/deactivate chat."""
@@ -61,7 +79,9 @@ class ChatsRepository:
     async def get_active_chats(self) -> List[Dict[str, Any]]:
         """Get all active chats."""
         sb = get_supabase()
-        result = sb.table(self.table).select("*").eq("is_active", True).execute()
+        result = await asyncio.to_thread(
+            sb.table(self.table).select("*").eq("is_active", True).execute
+        )
         return result.data or []
 
     async def is_banned(self, chat_id: int, user_id: int) -> bool:
@@ -77,10 +97,22 @@ class ChatsRepository:
             sb.table("chat_bans").select("*")
             .eq("chat_id", chat_id).eq("user_id", user_id).limit(1)
         )
+        key = ("chat_ban", chat_id, user_id)
+        cached, ban = repository_cache.get(key)
+        if cached:
+            return self._active_ban(ban)
         result = await asyncio.to_thread(result.execute)
         if not result.data:
+            repository_cache.set(key, None)
             return None
         ban = result.data[0]
+        repository_cache.set(key, ban)
+        return self._active_ban(ban)
+
+    @staticmethod
+    def _active_ban(ban: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not ban:
+            return None
         expires_at = ban.get("expires_at")
         if not expires_at:
             return ban
@@ -92,8 +124,8 @@ class ChatsRepository:
     async def get_banned_list(self, chat_id: int) -> List[Dict[str, Any]]:
         """Get active local bans in a chat."""
         sb = get_supabase()
-        result = (
-            sb.table("chat_bans").select("*").eq("chat_id", chat_id).execute()
+        result = await asyncio.to_thread(
+            sb.table("chat_bans").select("*").eq("chat_id", chat_id).execute
         )
         now = datetime.now(timezone.utc)
         active = []
@@ -113,27 +145,37 @@ class ChatsRepository:
         """Bind chat to a group."""
         sb = get_supabase()
         await self.get_or_create(chat_id)
-        binding = sb.table("chat_group_bindings").upsert({
-            "chat_id": chat_id,
-            "group_id": group_id
-        }).select("chat_id").execute()
+        binding = await asyncio.to_thread(
+            sb.table("chat_group_bindings").upsert({
+                "chat_id": chat_id,
+                "group_id": group_id
+            }).select("chat_id").execute
+        )
         if not binding.data:
             return False
         updated = await self.update(chat_id, {"group_id": group_id})
         if not updated:
-            (
+            await asyncio.to_thread(
                 sb.table("chat_group_bindings").delete()
-                .eq("chat_id", chat_id).eq("group_id", group_id).execute()
+                .eq("chat_id", chat_id).eq("group_id", group_id).execute
             )
             return False
-        sb.table("chat_group_bindings").delete().eq("chat_id", chat_id).neq(
-            "group_id", group_id
-        ).execute()
+        await asyncio.to_thread(
+            sb.table("chat_group_bindings").delete().eq("chat_id", chat_id).neq(
+                "group_id", group_id
+            ).execute
+        )
         return True
 
     async def unbind_group(self, chat_id: int) -> bool:
         """Unbind chat from group."""
         sb = get_supabase()
         updated = await self.update(chat_id, {"group_id": None})
-        sb.table("chat_group_bindings").delete().eq("chat_id", chat_id).execute()
+        await asyncio.to_thread(
+            sb.table("chat_group_bindings").delete().eq("chat_id", chat_id).execute
+        )
         return updated
+
+    @staticmethod
+    def invalidate_ban(chat_id: int, user_id: int) -> None:
+        repository_cache.invalidate(("chat_ban", chat_id, user_id))

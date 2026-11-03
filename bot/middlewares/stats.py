@@ -1,5 +1,6 @@
 """Statistics middleware: tracks regular message statistics in active chats."""
 
+import asyncio
 import logging
 
 from vkbottle import BaseMiddleware
@@ -13,6 +14,18 @@ from db.repositories.stats import StatsRepository
 logger = logging.getLogger(__name__)
 chats_repo = ChatsRepository()
 stats_repo = StatsRepository()
+_background_tasks: set[asyncio.Task[None]] = set()
+
+
+async def _increment_stats(chat_id: int, user_id: int) -> None:
+    try:
+        await stats_repo.increment(chat_id, user_id)
+    except Exception:
+        logger.exception(
+            "Could not increment message statistics for user %s in chat %s",
+            user_id,
+            chat_id,
+        )
 
 
 class StatsMiddleware(BaseMiddleware[Message]):
@@ -40,14 +53,9 @@ class StatsMiddleware(BaseMiddleware[Message]):
         if not chat or not chat.get("is_active"):
             return
 
-        try:
-            await stats_repo.increment(chat_id, user_id)
-        except Exception:
-            logger.exception(
-                "Could not increment message statistics for user %s in chat %s",
-                user_id,
-                chat_id,
-            )
+        task = asyncio.create_task(_increment_stats(chat_id, user_id))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
 
 __all__ = ("StatsMiddleware",)

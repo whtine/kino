@@ -33,6 +33,7 @@ from bot.keyboards import (
 )
 from bot.utils.vk_api import vk_api
 from config import config
+from db.cache import repository_cache
 from db.repositories.chats import ChatsRepository
 from db.repositories.command_aliases import CommandAliasesRepository
 from db.repositories.global_bans import GlobalBansRepository
@@ -570,24 +571,28 @@ async def command_router(message: Message):
                 return
             from db.supabase import get_supabase
             sb = get_supabase()
-            existing = sb.table("chat_reputation").select("target_id").eq(
-                "chat_id", chat_id
-            ).eq("voter_id", user_id).eq("target_id", target_id).limit(1).execute()
+            existing = await asyncio.to_thread(
+                sb.table("chat_reputation").select("target_id").eq(
+                    "chat_id", chat_id
+                ).eq("voter_id", user_id).eq("target_id", target_id).limit(1).execute
+            )
             if existing.data:
                 await message.answer("Вы уже голосовали за этого пользователя.")
                 return
             try:
-                sb.table("chat_reputation").insert({
+                await asyncio.to_thread(sb.table("chat_reputation").insert({
                     "chat_id": chat_id, "voter_id": user_id, "target_id": target_id
-                }).execute()
+                }).execute)
             except Exception as exc:
                 if getattr(exc, "code", None) == 23505 or getattr(exc, "pgcode", None) == "23505":
                     await message.answer("Вы уже голосовали за этого пользователя.")
                     return
                 raise
-            votes = sb.table("chat_reputation").select("voter_id").eq(
-                "chat_id", chat_id
-            ).eq("target_id", target_id).execute()
+            votes = await asyncio.to_thread(
+                sb.table("chat_reputation").select("voter_id").eq(
+                    "chat_id", chat_id
+                ).eq("target_id", target_id).execute
+            )
             count = len(votes.data or [])
             target = await _named_mention(chat_id, target_id)
             await message.answer(f"⭐ Репутация {target}: {count}")
@@ -756,19 +761,22 @@ async def command_router(message: Message):
                 reason = " ".join(rest) or None
             if command == "ban":
                 from db.supabase import get_supabase
-                result = get_supabase().table("chat_bans").upsert({
-                    "chat_id": chat_id,
-                    "user_id": target_id,
-                    "reason": reason,
-                    "banned_by": user_id,
-                    "expires_at": (
-                        (datetime.now(timezone.utc) + duration).isoformat()
-                        if duration
-                        else None
-                    ),
-                }).select("user_id").execute()
+                result = await asyncio.to_thread(
+                    get_supabase().table("chat_bans").upsert({
+                        "chat_id": chat_id,
+                        "user_id": target_id,
+                        "reason": reason,
+                        "banned_by": user_id,
+                        "expires_at": (
+                            (datetime.now(timezone.utc) + duration).isoformat()
+                            if duration
+                            else None
+                        ),
+                    }).select("user_id").execute
+                )
                 if not result.data:
                     raise RuntimeError("Не удалось сохранить локальную блокировку.")
+                repository_cache.invalidate(("chat_ban", chat_id, target_id))
             kicked = bool(vk_api and await vk_api.kick_user(chat_id, target_id))
             if not kicked and command != "ban":
                 await message.answer("❌ Не удалось исключить пользователя. Проверьте права бота.")
@@ -827,19 +835,22 @@ async def command_router(message: Message):
                 return
             from db.supabase import get_supabase
             sb = get_supabase()
-            existing_ban = sb.table("chat_bans").select("user_id").eq(
-                "chat_id", chat_id
-            ).eq("user_id", target_id).limit(1).execute()
+            existing_ban = await asyncio.to_thread(
+                sb.table("chat_bans").select("user_id").eq(
+                    "chat_id", chat_id
+                ).eq("user_id", target_id).limit(1).execute
+            )
             if not existing_ban.data:
                 await message.answer("Пользователь не найден в списке блокировок этой беседы.")
                 return
-            deleted = (
+            deleted = await asyncio.to_thread(
                 sb.table("chat_bans").delete().eq("chat_id", chat_id)
-                .eq("user_id", target_id).select("user_id").execute()
+                .eq("user_id", target_id).select("user_id").execute
             )
             if not deleted.data:
                 await message.answer("Блокировка уже была снята.")
                 return
+            repository_cache.invalidate(("chat_ban", chat_id, target_id))
             reason = " ".join(rest).strip() or None
             await _add_log(chat_id, target_id, user_id, "unban", reason)
             target = await _named_mention(chat_id, target_id)
@@ -1828,16 +1839,17 @@ async def _handle_punishment_callback(event: MessageEvent, payload: dict) -> Non
             from db.supabase import get_supabase
 
             sb = get_supabase()
-            deleted = (
+            deleted = await asyncio.to_thread(
                 sb.table("chat_bans").delete()
                 .eq("chat_id", event.peer_id)
                 .eq("user_id", target_id)
                 .select("user_id")
-                .execute()
+                .execute
             )
             if not deleted.data:
                 await event.show_snackbar("Блокировка уже снята.")
                 return
+            repository_cache.invalidate(("chat_ban", event.peer_id, target_id))
             if not vk_api or not await vk_api.add_chat_user(event.peer_id, target_id):
                 await _add_log(event.peer_id, target_id, event.user_id, "unban")
                 await event.show_snackbar(

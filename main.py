@@ -3,13 +3,27 @@
 import asyncio
 import logging
 
-from aiohttp import web
+from aiohttp import ClientError, ClientSession, ClientTimeout, web
 
 from bot.dispatcher import bot
 from config import config
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+HEALTH_PING_INTERVAL_SECONDS = 5 * 60
+
+
+async def ping_health_endpoint(url: str) -> None:
+    """Keep the configured public health endpoint active with periodic requests."""
+    timeout = ClientTimeout(total=10)
+    async with ClientSession(timeout=timeout) as session:
+        while True:
+            await asyncio.sleep(HEALTH_PING_INTERVAL_SECONDS)
+            try:
+                async with session.get(url) as response:
+                    response.raise_for_status()
+            except (ClientError, asyncio.TimeoutError):
+                logger.exception("Health endpoint ping failed")
 
 
 async def healthz(request: web.Request) -> web.Response:
@@ -53,7 +67,25 @@ async def main() -> None:
     site = web.TCPSite(runner, "0.0.0.0", config.port)
     await site.start()
     logging.info("Health server started on port %s", config.port)
-    await bot.run_polling()
+    ping_task = None
+    if config.health_ping_url:
+        ping_url = f"{config.health_ping_url.rstrip('/')}/healthz"
+        ping_task = asyncio.create_task(
+            ping_health_endpoint(ping_url), name="health-endpoint-pinger"
+        )
+        logger.info("Health endpoint pinger enabled")
+    else:
+        logger.info(
+            "Health endpoint pinger disabled; set HEALTH_PING_URL to a public service URL"
+        )
+
+    try:
+        await bot.run_polling()
+    finally:
+        if ping_task:
+            ping_task.cancel()
+            await asyncio.gather(ping_task, return_exceptions=True)
+        await runner.cleanup()
 
 
 if __name__ == "__main__":

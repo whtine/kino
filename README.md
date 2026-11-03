@@ -65,7 +65,8 @@ python main.py
 - Build command: `pip install -r requirements.txt`; start command: `python main.py`.
 - Set `VK_TOKEN`, `GROUP_ID`, `SUPABASE_URL`, and `SUPABASE_KEY` in the Render Environment settings.
 - The app listens on Render's `PORT` at `0.0.0.0` and provides `/healthz` for Render health checks. `/` and `/ping` also return HTTP 200.
-- To reduce free-tier idle spin-down, add an external HTTP monitor (for example, UptimeRobot) for `https://<your-render-service>.onrender.com/healthz` with a 5-minute interval. Create the monitor only after the first successful deploy and substitute your service's actual `onrender.com` URL.
+- The app pings `RENDER_EXTERNAL_URL/healthz` every 5 minutes when Render provides `RENDER_EXTERNAL_URL`. Outside Render, set the optional `HEALTH_PING_URL` environment variable to the public base URL of the service (the app appends `/healthz`).
+- An external HTTP monitor (for example, UptimeRobot) targeting `https://<your-render-service>.onrender.com/healthz` every 5 minutes is still recommended. A monitor can reduce free-tier idle spin-down but cannot guarantee uninterrupted free service: Render's free instances have monthly usage limits and may still restart or be suspended.
 - A ping monitor can wake the service and reduce idle spin-down, but cannot guarantee uninterrupted free service: Render's free instances have monthly usage limits and may still restart or be suspended.
 - Apply the Supabase migrations and use a server-side Supabase key. Keep all secrets in Render's environment settings, not Git.
 

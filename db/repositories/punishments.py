@@ -1,3 +1,5 @@
+import asyncio
+
 from db.supabase import get_supabase
 from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
@@ -23,14 +25,16 @@ class PunishmentsRepository:
         }
         if duration:
             data["duration"] = str(duration)
-        result = sb.table(self.table).insert(data).select("*").execute()
+        result = await asyncio.to_thread(
+            sb.table(self.table).insert(data).select("*").execute
+        )
         return result.data[0] if result.data else None
 
     async def get_by_id(self, chat_id: int, punishment_id: int) -> Optional[Dict[str, Any]]:
         sb = get_supabase()
-        result = (
+        result = await asyncio.to_thread(
             sb.table(self.table).select("*").eq("chat_id", chat_id)
-            .eq("id", punishment_id).limit(1).execute()
+            .eq("id", punishment_id).limit(1).execute
         )
         return result.data[0] if result.data else None
 
@@ -38,10 +42,10 @@ class PunishmentsRepository:
         self, chat_id: int, target_id: int, punishment_type: str
     ) -> Optional[Dict[str, Any]]:
         sb = get_supabase()
-        result = (
+        result = await asyncio.to_thread(
             sb.table(self.table).select("*").eq("chat_id", chat_id)
             .eq("target_id", target_id).eq("type", punishment_type)
-            .order("created_at", desc=True).limit(1).execute()
+            .order("created_at", desc=True).limit(1).execute
         )
         return result.data[0] if result.data else None
 
@@ -49,11 +53,11 @@ class PunishmentsRepository:
         self, chat_id: int, target_id: int, role: int, role_name: str
     ) -> Optional[Dict[str, Any]]:
         sb = get_supabase()
-        result = (
+        result = await asyncio.to_thread(
             sb.table(self.table).select("created_at").eq("chat_id", chat_id)
             .eq("target_id", target_id).eq("type", "role_change")
             .ilike("reason", f"%→ {role_name} ({role})")
-            .order("created_at", desc=True).limit(1).execute()
+            .order("created_at", desc=True).limit(1).execute
         )
         return result.data[0] if result.data else None
 
@@ -61,32 +65,39 @@ class PunishmentsRepository:
         self, chat_id: int, target_id: int, punishment_id: int
     ) -> bool:
         sb = get_supabase()
-        result = (
+        result = await asyncio.to_thread(
             sb.table(self.table).delete().eq("chat_id", chat_id)
             .eq("target_id", target_id).eq("id", punishment_id)
-            .eq("type", "warn").select("id").execute()
+            .eq("type", "warn").select("id").execute
         )
         return bool(result.data)
 
     async def get_history(self, chat_id: int, target_id: int, limit: int = 50) -> List[Dict[str, Any]]:
         """Get punishment history for user in chat."""
         sb = get_supabase()
-        result = sb.table(self.table).select("*").eq("chat_id", chat_id).eq("target_id", target_id).order("created_at", desc=True).limit(limit).execute()
+        result = await asyncio.to_thread(
+            sb.table(self.table).select("*").eq("chat_id", chat_id)
+            .eq("target_id", target_id).order("created_at", desc=True)
+            .limit(limit).execute
+        )
         return result.data or []
 
     async def get_user_history(self, target_id: int, limit: int = 50) -> List[Dict[str, Any]]:
         """Get all punishments for user across chats."""
         sb = get_supabase()
-        result = sb.table(self.table).select("*").eq("target_id", target_id).order("created_at", desc=True).limit(limit).execute()
+        result = await asyncio.to_thread(
+            sb.table(self.table).select("*").eq("target_id", target_id)
+            .order("created_at", desc=True).limit(limit).execute
+        )
         return result.data or []
 
     async def get_active_warns(self, chat_id: int, target_id: int) -> List[Dict[str, Any]]:
         """Get active (not unwarned) warnings for user."""
         sb = get_supabase()
-        result = (
+        result = await asyncio.to_thread(
             sb.table(self.table).select("*").eq("chat_id", chat_id)
             .eq("target_id", target_id).eq("type", "warn")
-            .order("created_at").execute()
+            .order("created_at").execute
         )
         warns = result.data or []
         from db.repositories.members import MembersRepository
@@ -96,7 +107,10 @@ class PunishmentsRepository:
     async def get_mute_list(self, chat_id: int) -> List[Dict[str, Any]]:
         """Get latest mute records for users whose mute is still active."""
         sb = get_supabase()
-        result = sb.table(self.table).select("*").eq("chat_id", chat_id).eq("type", "mute").execute()
+        result = await asyncio.to_thread(
+            sb.table(self.table).select("*").eq("chat_id", chat_id)
+            .eq("type", "mute").execute
+        )
         records = result.data or []
         latest = {}
         for record in records:
@@ -125,5 +139,8 @@ class PunishmentsRepository:
     async def get_recent_logs(self, chat_id: int, limit: int = 20) -> List[Dict[str, Any]]:
         """Get recent punishment logs for chat."""
         sb = get_supabase()
-        result = sb.table(self.table).select("*").eq("chat_id", chat_id).order("created_at", desc=True).limit(limit).execute()
+        result = await asyncio.to_thread(
+            sb.table(self.table).select("*").eq("chat_id", chat_id)
+            .order("created_at", desc=True).limit(limit).execute
+        )
         return result.data or []

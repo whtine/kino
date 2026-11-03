@@ -3,6 +3,8 @@ from db.supabase import get_supabase
 from typing import Optional, Dict, Any, List
 import logging
 
+from db.cache import repository_cache
+
 logger = logging.getLogger(__name__)
 
 
@@ -12,6 +14,10 @@ class MembersRepository:
 
     async def get(self, chat_id: int, user_id: int) -> Optional[Dict[str, Any]]:
         """Get member by chat and user ID."""
+        key = ("member", chat_id, user_id)
+        cached, member = repository_cache.get(key)
+        if cached:
+            return member
         sb = get_supabase()
         result = await asyncio.to_thread(
             sb.table(self.table)
@@ -21,7 +27,9 @@ class MembersRepository:
             .limit(1)
             .execute
         )
-        return result.data[0] if result.data else None
+        member = result.data[0] if result.data else None
+        repository_cache.set(key, member)
+        return member
 
     async def get_or_create(self, chat_id: int, user_id: int) -> Dict[str, Any]:
         """Get existing member or create with default role 0."""
@@ -33,21 +41,27 @@ class MembersRepository:
     async def create(self, chat_id: int, user_id: int, role: int = 0) -> Dict[str, Any]:
         """Create new member record."""
         sb = get_supabase()
-        sb.table(self.table).insert({
-            "chat_id": chat_id,
-            "user_id": user_id,
-            "role": role,
-        }).execute()
+        await asyncio.to_thread(
+            sb.table(self.table).insert({
+                "chat_id": chat_id,
+                "user_id": user_id,
+                "role": role,
+            }).execute
+        )
+        repository_cache.invalidate(("member", chat_id, user_id))
         return await self.get(chat_id, user_id)
 
     async def update(self, chat_id: int, user_id: int, data: Dict[str, Any]) -> bool:
         """Update member fields."""
         sb = get_supabase()
-        result = (
+        result = await asyncio.to_thread(
             sb.table(self.table).update(data).eq("chat_id", chat_id)
-            .eq("user_id", user_id).select("user_id").execute()
+            .eq("user_id", user_id).select("user_id").execute
         )
-        return bool(result.data)
+        updated = bool(result.data)
+        if updated:
+            repository_cache.invalidate(("member", chat_id, user_id))
+        return updated
 
     async def set_role(self, chat_id: int, user_id: int, role: int) -> bool:
         """Set member role (0-4)."""
@@ -73,6 +87,8 @@ class MembersRepository:
             .select("user_id")
             .execute
         )
+        if result.data:
+            repository_cache.invalidate(("member", chat_id, user_id))
         return previous_role if result.data else None
 
     async def get_role(self, chat_id: int, user_id: int) -> int:
@@ -146,7 +162,10 @@ class MembersRepository:
     async def get_staff(self, chat_id: int, min_role: int = 1) -> List[Dict[str, Any]]:
         """Get all members with role >= min_role."""
         sb = get_supabase()
-        result = sb.table(self.table).select("*").eq("chat_id", chat_id).gte("role", min_role).order("role", desc=True).execute()
+        result = await asyncio.to_thread(
+            sb.table(self.table).select("*").eq("chat_id", chat_id)
+            .gte("role", min_role).order("role", desc=True).execute
+        )
         return result.data or []
 
     async def get_online_staff(self, chat_id: int, online_user_ids: List[int], min_role: int = 1) -> List[Dict[str, Any]]:
@@ -157,11 +176,16 @@ class MembersRepository:
     async def get_all_in_chat(self, chat_id: int) -> List[Dict[str, Any]]:
         """Get all members in chat."""
         sb = get_supabase()
-        result = sb.table(self.table).select("*").eq("chat_id", chat_id).execute()
+        result = await asyncio.to_thread(
+            sb.table(self.table).select("*").eq("chat_id", chat_id).execute
+        )
         return result.data or []
 
     async def search_by_nickname(self, chat_id: int, nickname: str) -> List[Dict[str, Any]]:
         """Search members by nickname (ILIKE)."""
         sb = get_supabase()
-        result = sb.table(self.table).select("*").eq("chat_id", chat_id).ilike("nickname", f"%{nickname}%").execute()
+        result = await asyncio.to_thread(
+            sb.table(self.table).select("*").eq("chat_id", chat_id)
+            .ilike("nickname", f"%{nickname}%").execute
+        )
         return result.data or []
