@@ -7,7 +7,7 @@ from vkbottle import BaseMiddleware
 from vkbottle.bot import Message
 
 from bot.utils.context import get_chat_id
-from bot.utils.vk_api import vk_api
+from bot.utils import vk_api as vk_api_module
 from config import config
 from db.repositories.chats import ChatsRepository
 from db.repositories.global_bans import GlobalBansRepository
@@ -107,7 +107,9 @@ class ActivationMiddleware(BaseMiddleware[Message]):
                 )
             if is_banned:
                 await self._delete_message(message, chat_id)
-                if vk_api and not await vk_api.kick_user(chat_id, message.from_id):
+                if vk_api_module.vk_api and not await vk_api_module.vk_api.kick_user(
+                    chat_id, message.from_id
+                ):
                     logger.error(
                         "Could not enforce active ban for user %s in chat %s",
                         message.from_id,
@@ -137,14 +139,14 @@ class ActivationMiddleware(BaseMiddleware[Message]):
                 chat_id,
             )
             return
-        if not vk_api:
+        if not vk_api_module.vk_api:
             logger.error(
                 "Could not delete restricted message %s in chat %s: VK API is not initialized",
                 message_id,
                 chat_id,
             )
             return
-        if not await vk_api.delete_message(chat_id, [message_id]):
+        if not await vk_api_module.vk_api.delete_message(chat_id, [message_id]):
             logger.error(
                 "Failed to delete restricted message %s in chat %s",
                 message_id,
