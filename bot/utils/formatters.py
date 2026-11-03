@@ -74,15 +74,51 @@ def format_ban(ban: Optional[dict]) -> str:
     return f"Забанен: {ban.get('user_id')} (причина: {ban.get('reason') or 'нет'})"
 
 
-def format_ban_list(bans: list[dict], title: str) -> str:
+def format_ban_list(
+    bans: list[dict], title: str, names: Optional[dict[int, str]] = None
+) -> str:
     lines = [title]
     for ban in bans:
         expires_at = ban.get("expires_at")
-        expiry = f"до {expires_at}" if expires_at else "бессрочно"
+        created_at = ban.get("created_at")
+        expiry = "бессрочно"
+        expires_display = None
+        if expires_at:
+            try:
+                expires_datetime = datetime.fromisoformat(
+                    expires_at.replace("Z", "+00:00")
+                )
+                expires_display = expires_datetime.strftime("%d.%m.%Y %H:%M UTC")
+                if created_at:
+                    created_datetime = datetime.fromisoformat(
+                        created_at.replace("Z", "+00:00")
+                    )
+                    duration = expires_datetime - created_datetime
+                    expiry = f"{format_duration(duration)} (до {expires_display})"
+                else:
+                    expiry = f"до {expires_display}"
+            except (AttributeError, TypeError, ValueError):
+                expiry = f"до {expires_at}"
         lines.append(
-            f"• {format_user_mention(ban['user_id'])} — "
+            f"• {format_user_mention(ban['user_id'], (names or {}).get(ban['user_id']))} — "
             f"{ban.get('reason') or 'причина не указана'}; {expiry}"
         )
+        details = []
+        moderator_id = ban.get("banned_by")
+        if moderator_id:
+            details.append(
+                f"Забанил: {format_user_mention(moderator_id, (names or {}).get(moderator_id))}"
+            )
+        if created_at:
+            try:
+                created_display = datetime.fromisoformat(
+                    created_at.replace("Z", "+00:00")
+                ).strftime("%d.%m.%Y %H:%M UTC")
+            except (AttributeError, TypeError, ValueError):
+                created_display = str(created_at)
+            details.append(f"Когда: {created_display}")
+        if details:
+            lines.append(f"  {'; '.join(details)}")
     if not bans:
         lines.append("• Активных блокировок нет.")
     return "\n".join(lines)

@@ -929,31 +929,60 @@ async def command_router(message: Message):
             return
         if command == "getban":
             target_id, _ = await _target_from_args(message, args)
-            if not target_id:
+            group_id = await _bound_group(chat_id)
+            if not target_id and args and args[0].lower() not in {
+                "list",
+                "список",
+                "all",
+            }:
                 await message.answer(
-                    "Укажите ID пользователя или ответьте на его сообщение: "
-                    "/getban [id]"
+                    "Использование: /getban [ID или ссылка] либо /getban список."
                 )
                 return
-            local_ban, group_id = await asyncio.gather(
-                chats.get_ban(chat_id, target_id),
-                _bound_group(chat_id),
+            if target_id:
+                local_ban = await chats.get_ban(chat_id, target_id)
+                local_bans = [local_ban] if local_ban else []
+                global_bans = []
+                if group_id:
+                    global_ban = await global_data.is_banned(group_id, target_id)
+                    global_bans = [global_ban] if global_ban else []
+                titles = (
+                    f"⛔ Блокировка {format_user_mention(target_id)} в этой беседе:",
+                    f"🌐 Глобальная блокировка {format_user_mention(target_id)} "
+                    "в синхронизированных беседах:",
+                )
+            else:
+                local_bans = await chats.get_banned_list(chat_id)
+                global_bans = (
+                    await global_data.get_banned_list(group_id)
+                    if group_id
+                    else []
+                )
+                titles = (
+                    "⛔ Активные блокировки в этой беседе:",
+                    "🌐 Активные глобальные блокировки отдела:",
+                )
+
+            user_ids = {
+                int(ban["user_id"])
+                for ban in (*local_bans, *global_bans)
+                if ban.get("user_id")
+            }
+            user_ids.update(
+                int(ban["banned_by"])
+                for ban in (*local_bans, *global_bans)
+                if ban.get("banned_by")
+            )
+            names = (
+                await vk_api.get_member_names(chat_id, list(user_ids))
+                if vk_api and user_ids
+                else {}
             )
             sections = [
-                format_ban_list(
-                    [local_ban] if local_ban else [],
-                    f"⛔ Блокировка {format_user_mention(target_id)} в этой беседе:",
-                )
+                format_ban_list(local_bans, titles[0], names)
             ]
             if group_id:
-                global_ban = await global_data.is_banned(group_id, target_id)
-                sections.append(
-                    format_ban_list(
-                        [global_ban] if global_ban else [],
-                        f"🌐 Глобальная блокировка {format_user_mention(target_id)} "
-                        "в синхронизированных беседах:",
-                    )
-                )
+                sections.append(format_ban_list(global_bans, titles[1], names))
             await message.answer("\n\n".join(sections))
             return
         if command == "mute":

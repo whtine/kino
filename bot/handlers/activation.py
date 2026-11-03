@@ -1,5 +1,6 @@
 """Activation handlers: activation via '*' command or /activate."""
 
+import asyncio
 import logging
 
 from vkbottle import Keyboard
@@ -12,12 +13,14 @@ from bot.utils.vk_api import vk_api
 from bot.utils.permissions import get_role_name
 from config import config
 from db.repositories.chats import ChatsRepository
+from db.repositories.global_bans import GlobalBansRepository
 from db.repositories.members import MembersRepository
 from db.repositories.punishments import PunishmentsRepository
 
 logger = logging.getLogger(__name__)
 bp = Blueprint("activation")
 chats_repo = ChatsRepository()
+global_bans_repo = GlobalBansRepository()
 members_repo = MembersRepository()
 punishments_repo = PunishmentsRepository()
 
@@ -121,6 +124,28 @@ async def welcome_new_chat_member(message: Message):
         )
         return
     if member_id < 0:
+        return
+
+    chat, local_ban = await asyncio.gather(
+        chats_repo.get(message.peer_id),
+        chats_repo.get_ban(message.peer_id, member_id),
+    )
+    global_ban = None
+    group_id = chat.get("group_id") if chat else None
+    if group_id:
+        global_ban = await global_bans_repo.is_banned(group_id, member_id)
+
+    if local_ban or global_ban:
+        if not vk_api or not await vk_api.kick_user(message.peer_id, member_id):
+            logger.error(
+                "Could not remove banned user %s after they were added to chat %s",
+                member_id,
+                message.peer_id,
+            )
+            await message.answer(
+                "⛔ В беседу добавлен пользователь с активной блокировкой, "
+                "но удалить его автоматически не удалось. Проверьте права бота."
+            )
         return
 
     names = await vk_api.get_member_names(message.peer_id, [member_id]) if vk_api else {}
