@@ -936,7 +936,22 @@ async def command_router(message: Message):
                 return
             reason = " ".join(rest[duration_tokens:]) or None
             expires = datetime.now(timezone.utc) + duration
+            if not vk_api or not await vk_api.set_chat_mute(
+                chat_id, target_id, duration_minutes * 60
+            ):
+                await message.answer(
+                    "❌ Не удалось ограничить отправку сообщений в VK. "
+                    "Проверьте права сообщества и администратора беседы."
+                )
+                return
             if not await members.set_mute(chat_id, target_id, True, expires.isoformat()):
+                if not await vk_api.set_chat_mute(chat_id, target_id):
+                    logger.error(
+                        "Could not roll back VK mute for user %s in chat %s "
+                        "after database update failed",
+                        target_id,
+                        chat_id,
+                    )
                 raise RuntimeError("Не удалось сохранить статус мута.")
             record = await _add_log(chat_id, target_id, user_id, "mute", reason, duration)
             names = (
@@ -963,6 +978,12 @@ async def command_router(message: Message):
                 await message.answer("Укажите ID или ответьте на сообщение пользователя.")
                 return
             if not await _can_moderate(message, chat_id, user_id, target_id):
+                return
+            if not vk_api or not await vk_api.set_chat_mute(chat_id, target_id):
+                await message.answer(
+                    "❌ Не удалось снять ограничение в VK. "
+                    "Проверьте права сообщества и администратора беседы."
+                )
                 return
             if not await members.set_mute(chat_id, target_id, False):
                 raise RuntimeError("Не удалось снять мут.")
@@ -1464,8 +1485,40 @@ async def command_router(message: Message):
             if not group or group["owner_id"] != user_id:
                 await message.answer("⛔ Передать владельца может только владелец группы.")
                 return
-            if not await groups.update(group["id"], {"owner_id": target_id}):
+            previous_role = await members.get_role(chat_id, target_id)
+            if not await members.set_role(chat_id, target_id, 4):
+                raise RuntimeError("Не удалось назначить новому владельцу роль 4.")
+            try:
+                owner_updated = await groups.update(
+                    group["id"], {"owner_id": target_id}
+                )
+            except Exception:
+                if not await members.set_role(chat_id, target_id, previous_role):
+                    logger.error(
+                        "Could not restore role for user %s in chat %s after "
+                        "group owner update failed",
+                        target_id,
+                        chat_id,
+                    )
+                raise
+            if not owner_updated:
+                if not await members.set_role(chat_id, target_id, previous_role):
+                    logger.error(
+                        "Could not restore role for user %s in chat %s after "
+                        "group owner update returned no rows",
+                        target_id,
+                        chat_id,
+                    )
                 raise RuntimeError("Не удалось передать права владельца.")
+            if previous_role != 4:
+                await _add_log(
+                    chat_id,
+                    target_id,
+                    user_id,
+                    "role_change",
+                    f"Роль: {get_role_name(previous_role)} ({previous_role}) → "
+                    f"{get_role_name(4)} (4). Назначена при передаче владения отделом.",
+                )
             await _add_log(
                 chat_id,
                 target_id,
@@ -1865,6 +1918,9 @@ async def _handle_punishment_callback(event: MessageEvent, payload: dict) -> Non
                 or not await members.is_muted(event.peer_id, target_id)
             ):
                 await event.show_snackbar("Этот мут уже снят или заменён новым.")
+                return
+            if not vk_api or not await vk_api.set_chat_mute(event.peer_id, target_id):
+                await event.show_snackbar("Не удалось снять ограничение в VK.")
                 return
             if not await members.set_mute(event.peer_id, target_id, False):
                 raise RuntimeError("Не удалось снять мут.")

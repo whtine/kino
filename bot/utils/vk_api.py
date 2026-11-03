@@ -36,6 +36,38 @@ class VKAPIWrapper:
             logger.exception("Could not remove user %s from chat %s", user_id, chat_id)
             return False
 
+    async def set_chat_mute(
+        self, chat_id: int, user_id: int, duration_seconds: Optional[int] = None
+    ) -> bool:
+        """Apply or remove a VK conversation read-only restriction."""
+        data: Dict[str, Any] = {
+            "peer_id": chat_id,
+            "member_ids": str(user_id),
+            "action": "ro" if duration_seconds else "rw",
+        }
+        if duration_seconds:
+            data["for"] = duration_seconds
+        try:
+            result = await self.api.request(
+                "messages.changeConversationMemberRestrictions", data=data
+            )
+            response = result.get("response") if isinstance(result, dict) else result
+            if response:
+                return True
+            logger.error(
+                "VK did not apply mute restriction for user %s in chat %s",
+                user_id,
+                chat_id,
+            )
+            return False
+        except Exception:
+            logger.exception(
+                "Could not change mute restriction for user %s in chat %s",
+                user_id,
+                chat_id,
+            )
+            return False
+
     async def add_chat_user(self, chat_id: int, user_id: int) -> bool:
         try:
             await self.api.messages.add_chat_user(
