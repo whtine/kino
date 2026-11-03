@@ -236,6 +236,43 @@ async def _revoke_role_after_removal(
     )
 
 
+async def _ensure_chat_member(
+    message: Message, chat_id: int, target_id: int
+) -> bool:
+    if not vk_api:
+        raise RuntimeError("VK API не инициализирован.")
+
+    conversation_members = await vk_api.get_conversation_members(chat_id)
+    if any(
+        (
+            member.get("member_id")
+            if isinstance(member, dict)
+            else getattr(member, "member_id", None)
+        )
+        == target_id
+        for member in conversation_members
+    ):
+        return True
+
+    previous_role = await members.clear_role(chat_id, target_id)
+    if previous_role is not None:
+        await _add_log(
+            chat_id,
+            target_id,
+            message.from_id,
+            "role_change",
+            f"Снята роль отсутствующего участника: "
+            f"{get_role_name(previous_role)} ({previous_role}) → "
+            f"{get_role_name(0)} (0)",
+        )
+    await message.answer(
+        "⛔ Пользователь не состоит в этой беседе. "
+        "Назначение роли или передача владельца невозможны."
+        + (" Сохранённая роль снята." if previous_role is not None else "")
+    )
+    return False
+
+
 async def _owned_group_for(owner_id: int, reference: str) -> Optional[dict]:
     owned_groups = await groups.get_by_owner(owner_id)
     reference = reference.strip()
@@ -388,14 +425,14 @@ async def command_router(message: Message):
                     )
                     return
                 if (
-                    not re.fullmatch(r"[a-z][a-z0-9_]{0,19}", alias)
+                    not re.fullmatch(r"[^\W\d_][\w]{0,19}", alias)
                     or alias in COMMAND_PERMISSIONS
                     or alias in _COMMAND_ALIASES
                     or alias in _RESERVED_COMMAND_ALIASES
                 ):
                     await message.answer(
-                        "Псевдоним должен быть новым именем из латинских букв, "
-                        "цифр и _, длиной до 20 символов."
+                        "Псевдоним должен начинаться с буквы и содержать только "
+                        "буквы, цифры и _, длиной до 20 символов."
                     )
                     return
                 aliases = await command_aliases.get_all(user_id)
@@ -1485,6 +1522,8 @@ async def command_router(message: Message):
             if not group or group["owner_id"] != user_id:
                 await message.answer("⛔ Передать владельца может только владелец группы.")
                 return
+            if not await _ensure_chat_member(message, chat_id, target_id):
+                return
             previous_role = await members.get_role(chat_id, target_id)
             if not await members.set_role(chat_id, target_id, 4):
                 raise RuntimeError("Не удалось назначить новому владельцу роль 4.")
@@ -1990,6 +2029,8 @@ async def _assign_role(message: Message, args: list[str], role: int, actor_id: i
     target_id, _ = await _target_from_args(message, args)
     if not target_id:
         await message.answer("Ответьте на сообщение пользователя или укажите его ID.")
+        return
+    if not await _ensure_chat_member(message, chat_id, target_id):
         return
     actor_role = await members.get_role(chat_id, actor_id)
     target_role = await members.get_role(chat_id, target_id)
