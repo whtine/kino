@@ -290,14 +290,24 @@ async def _owned_group_for(owner_id: int, reference: str) -> Optional[dict]:
     )
 
 
-async def _render_nick_list(
-    chat_id: int, page: int
-) -> tuple[str, str]:
-    entries = [
-        entry
+async def _get_nick_list_entries(chat_id: int) -> list[dict]:
+    entries_by_user = {
+        int(entry["user_id"]): entry
         for entry in await members.get_all_in_chat(chat_id)
         if entry.get("nickname")
-    ]
+    }
+    group_id = await _bound_group(chat_id)
+    if group_id:
+        for entry in await global_data.get_all_nicknames(group_id):
+            entries_by_user[int(entry["user_id"])] = entry
+    return list(entries_by_user.values())
+
+
+async def _render_nick_list(
+    chat_id: int, page: int, entries: Optional[list[dict]] = None
+) -> tuple[str, str]:
+    if entries is None:
+        entries = await _get_nick_list_entries(chat_id)
     entries.sort(
         key=lambda entry: (
             str(entry["nickname"]).casefold(),
@@ -1357,15 +1367,11 @@ async def command_router(message: Message):
             )
             return
         if command == "nlist":
-            entries = [
-                entry
-                for entry in await members.get_all_in_chat(chat_id)
-                if entry.get("nickname")
-            ]
+            entries = await _get_nick_list_entries(chat_id)
             if not entries:
                 await message.answer("📋 Пользователей с ником нет.")
                 return
-            text, keyboard = await _render_nick_list(chat_id, 0)
+            text, keyboard = await _render_nick_list(chat_id, 0, entries)
             await message.answer(text, keyboard=keyboard)
             return
         if command == "gnick":
