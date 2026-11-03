@@ -51,6 +51,7 @@ db/migrations/002_feature_updates.sql
 db/migrations/003_ban_expirations.sql
 db/migrations/004_role_cap_4.sql
 db/migrations/005_personal_command_aliases.sql
+db/migrations/006_cyrillic_command_aliases.sql
 ```
 
 4. Start the bot:
@@ -77,6 +78,6 @@ Mute durations accept Russian units (for example, `/mute 123 30м флуд` or `
 `/rep` allows one vote for each other user per chat. Cross-chat operations only target conversations explicitly linked to the same department with `/bind`; `/sban`, `/sunban`, `/ssnick`, `/srnick`, `/skick`, and `/szov` act on the bound chats. `/async timeout on|off` applies silence mode to those chats. Department aliases are `/otdel`, `/delotdel`, and `/myotdel`.
 In an inactive chat, only `/start` and `/activate` (or `*`) are accepted. `/start` displays the activation button; inviting new members triggers a welcome message with `/info`.
 `/help` displays commands with descriptions; inline role buttons show only commands assigned to the selected level. `/getban [ID or VK profile link]` (level 2+) or a reply checks one user's active bans. `/getban` or `/getban список` lists all active local bans and, for a bound chat, global bans in its group.
-Users can create up to 20 personal command aliases with `/mycmd add stats stata` or `/mycmd add stats статистика`, list them with `/mycmd list`, and remove one with `/mycmd remove статистика`. Aliases apply only to their creator and retain the original command's role checks. Apply migration `db/migrations/005_personal_command_aliases.sql` after the previous migrations.
+Users can create up to 20 personal command aliases with `/mycmd add stats stata` or `/mycmd add stats статистика`, list them with `/mycmd list`, and remove one with `/mycmd remove статистика`. Aliases apply only to their creator and retain the original command's role checks. Apply migration `db/migrations/005_personal_command_aliases.sql` after the previous migrations, then apply `db/migrations/006_cyrillic_command_aliases.sql` to enable Cyrillic aliases.
 `/info` lists the chat's official links. Role 4 can add links with `/info add Label https://example.com` and remove them with `/info remove N`.
 Commands that accept a user work with a numeric VK ID, a VK profile mention, a profile link (`vk.com/id123` or `vk.com/screen_name`), or a reply to that user's message. For example, `/id https://vk.com/screen_name`, `/stats vk.com/id123`, `/ban https://vk.com/id123 причина`, and `/getban vk.com/id123`. User mentions in bot replies display the user's numeric ID alongside their name, including statistics and moderation results.

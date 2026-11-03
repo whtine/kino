@@ -1657,16 +1657,56 @@ async def command_router(message: Message):
                 return
             if not await _can_moderate(message, chat_id, user_id, target_id):
                 return
+            bound_chats = await groups.get_bound_chats(group_id)
+            local_bans = await asyncio.gather(
+                *(chats.get_ban(bound_chat, target_id) for bound_chat in bound_chats)
+            )
+            chats_with_local_bans = {
+                bound_chat
+                for bound_chat, local_ban in zip(bound_chats, local_bans)
+                if local_ban
+            }
             removed = await global_data.unban(group_id, target_id)
             if removed:
+                eligible_chats = [
+                    bound_chat
+                    for bound_chat in bound_chats
+                    if bound_chat not in chats_with_local_bans
+                ]
+                add_results = (
+                    await asyncio.gather(
+                        *(
+                            vk_api.add_chat_user(bound_chat, target_id)
+                            for bound_chat in eligible_chats
+                        )
+                    )
+                    if vk_api
+                    else [False] * len(eligible_chats)
+                )
+                added_count = sum(add_results)
+                failed_count = len(add_results) - added_count
                 reason = " ".join(rest).strip() or None
                 await _add_log(chat_id, target_id, user_id, "gunban", reason)
                 target = await _named_mention(chat_id, target_id)
                 actor = await _named_mention(chat_id, user_id)
+                status = (
+                    f"\nПользователь добавлен в {added_count} из "
+                    f"{len(bound_chats)} связанных бесед."
+                )
+                if failed_count:
+                    status += (
+                        f" Не удалось добавить в {failed_count} бесед"
+                        " — проверьте права бота."
+                    )
+                if chats_with_local_bans:
+                    status += (
+                        f" В {len(chats_with_local_bans)} беседах осталась "
+                        "отдельная локальная блокировка."
+                    )
                 await message.answer(
                     f"✅ {actor} снял глобальную блокировку с "
-                    f"{target} во всех чатах отдела.\n"
-                    f"Причина: {reason or 'не указана'}."
+                    f"{target} во всех чатах отдела."
+                    f"{status}\nПричина: {reason or 'не указана'}."
                 )
             else:
                 await message.answer("Пользователь не найден в списке глобальных блокировок.")
