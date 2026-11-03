@@ -20,6 +20,16 @@ global_bans_repo = GlobalBansRepository()
 ALLOWED_COMMANDS = {"activate", "start"}
 
 
+def _is_antitag_violation(settings: dict, text: str) -> bool:
+    if not settings.get("antitag"):
+        return False
+    mentioned = {int(value) for value in re.findall(r"(?:\[id|@id)(\d+)", text)}
+    if not mentioned:
+        return False
+    restricted = {int(value) for value in (settings.get("antitag_users") or [])}
+    return not restricted or bool(mentioned & restricted)
+
+
 class ActivationMiddleware(BaseMiddleware[Message]):
     """Allow activation commands and block processing in inactive chats."""
 
@@ -90,9 +100,7 @@ class ActivationMiddleware(BaseMiddleware[Message]):
             await self._delete_message(message, chat_id)
             self.stop(f"Тихий режим активен в чате {chat_id}")
 
-        restricted = {int(value) for value in (settings.get("antitag_users") or [])}
-        mentioned = {int(value) for value in re.findall(r"(?:\[id|@id)(\d+)", text)}
-        if settings.get("antitag") and mentioned & restricted:
+        if _is_antitag_violation(settings, text):
             await self._delete_message(message, chat_id)
             self.stop(f"Анти-тег активен в чате {chat_id}")
 

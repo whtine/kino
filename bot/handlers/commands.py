@@ -1766,28 +1766,55 @@ async def command_router(message: Message):
         if command == "antitag":
             current = await chats.get(chat_id)
             settings = current.get("settings") or {}
-            restricted = list(settings.get("antitag_users", []))
+            restricted = {
+                int(value) for value in (settings.get("antitag_users") or [])
+            }
             target_id, _ = await _target_from_args(message, args)
             if args and args[0].lower() in {"off", "выкл"}:
-                settings["antitag"] = False
                 if not await chats.update_settings(chat_id, {"antitag": False}):
                     raise RuntimeError("Не удалось обновить настройки антитега.")
                 await message.answer("✅ Антитег отключён.")
+            elif args and args[0].lower() in {"all", "все"}:
+                if not await chats.update_settings(
+                    chat_id, {"antitag": True, "antitag_users": []}
+                ):
+                    raise RuntimeError("Не удалось обновить настройки антитега.")
+                await message.answer("✅ Антитег включён: запрещены все упоминания.")
             elif target_id:
                 if target_id in restricted:
                     restricted.remove(target_id)
+                    enabled = bool(restricted)
                 else:
                     restricted.append(target_id)
+                    enabled = True
                 if not await chats.update_settings(
-                    chat_id, {"antitag": True, "antitag_users": restricted}
+                    chat_id,
+                    {
+                        "antitag": enabled,
+                        "antitag_users": sorted(restricted),
+                    },
                 ):
                     raise RuntimeError("Не удалось обновить настройки антитега.")
-                await message.answer(f"✅ Настройки антитега обновлены для ID {target_id}.")
+                if enabled:
+                    await message.answer(
+                        f"✅ Антитег включён для упоминаний ID {target_id}."
+                    )
+                else:
+                    await message.answer(
+                        "✅ Список ограниченных упоминаний очищен, антитег выключен."
+                    )
             else:
                 enabled = not bool(settings.get("antitag"))
                 if not await chats.update_settings(chat_id, {"antitag": enabled}):
                     raise RuntimeError("Не удалось обновить настройки антитега.")
-                await message.answer(f"✅ Антитег {'включён' if enabled else 'выключен'}.")
+                status = (
+                    "включён: запрещены все упоминания"
+                    if enabled and not restricted
+                    else "включён для выбранных пользователей"
+                    if enabled
+                    else "выключен"
+                )
+                await message.answer(f"✅ Антитег {status}.")
             return
         if command == "chat":
             chat_data = await chats.get(chat_id)
