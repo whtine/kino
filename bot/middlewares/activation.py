@@ -7,7 +7,7 @@ from vkbottle import BaseMiddleware
 from vkbottle.bot import Message
 
 from bot.utils.context import get_chat_id
-from bot.utils import vk_api as vk_api_module
+from bot.utils.vk_api import VKAPIWrapper
 from config import config
 from db.repositories.chats import ChatsRepository
 from db.repositories.global_bans import GlobalBansRepository
@@ -18,6 +18,11 @@ chats_repo = ChatsRepository()
 members_repo = MembersRepository()
 global_bans_repo = GlobalBansRepository()
 ALLOWED_COMMANDS = {"activate", "start"}
+
+
+def _message_vk_api(message: Message) -> VKAPIWrapper | None:
+    api = getattr(message, "unprepared_ctx_api", None)
+    return VKAPIWrapper(api) if api is not None else None
 
 
 def _is_antitag_violation(settings: dict, text: str) -> bool:
@@ -107,9 +112,15 @@ class ActivationMiddleware(BaseMiddleware[Message]):
                 )
             if is_banned:
                 await self._delete_message(message, chat_id)
-                if vk_api_module.vk_api and not await vk_api_module.vk_api.kick_user(
-                    chat_id, message.from_id
-                ):
+                vk_api = _message_vk_api(message)
+                if not vk_api:
+                    logger.error(
+                        "Could not enforce ban for user %s in chat %s: "
+                        "message has no VK API context",
+                        message.from_id,
+                        chat_id,
+                    )
+                elif not await vk_api.kick_user(chat_id, message.from_id):
                     logger.error(
                         "Could not enforce active ban for user %s in chat %s",
                         message.from_id,
@@ -139,14 +150,16 @@ class ActivationMiddleware(BaseMiddleware[Message]):
                 chat_id,
             )
             return
-        if not vk_api_module.vk_api:
+        vk_api = _message_vk_api(message)
+        if not vk_api:
             logger.error(
-                "Could not delete restricted message %s in chat %s: VK API is not initialized",
+                "Could not delete restricted message %s in chat %s: "
+                "message has no VK API context",
                 message_id,
                 chat_id,
             )
             return
-        if not await vk_api_module.vk_api.delete_message(chat_id, [message_id]):
+        if not await vk_api.delete_message(chat_id, [message_id]):
             logger.error(
                 "Failed to delete restricted message %s in chat %s",
                 message_id,
